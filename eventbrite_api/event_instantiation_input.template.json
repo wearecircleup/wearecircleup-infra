@@ -1,0 +1,22 @@
+{
+  "name": "",
+  "start": "",
+  "end": "",
+  "timezone": "America/Bogota",
+  "online_event": false,
+  "venue_id": "",
+  "capacity": 3,
+  "ticket_name": "Inscripcion general",
+  "registration_opens": "",
+  "overview": "",
+  "venue_consumption_note": "",
+  "venue_consumption_amount": 0,
+  "presenter_questions": [
+    {
+      "prompt": "Que te gustaria aprender o practicar en este evento?",
+      "type": "text",
+      "required": false,
+      "choices": []
+    }
+  ]
+}

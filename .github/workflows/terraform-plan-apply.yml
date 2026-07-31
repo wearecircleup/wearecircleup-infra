@@ -1,0 +1,99 @@
+name: Terraform Plan and Apply
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - "eventbrite_api/**"
+      - ".github/workflows/terraform-plan-apply.yml"
+      - ".github/workflows/terraform-destroy.yml"
+  workflow_dispatch:
+    inputs:
+      terraform_action:
+        description: "Accion a ejecutar"
+        required: true
+        default: plan
+        type: choice
+        options:
+          - plan
+          - apply
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-prod
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/prod
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Enforce main branch
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "This workflow must run from main because the IAM trust policy only allows refs/heads/main."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::311923415472:role/GitHubActionsDeployRole
+          role-session-name: github-actions-terraform-prod
+          allowed-account-ids: 311923415472
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Bootstrap Terraform state bucket
+        run: bash ../scripts/bootstrap-state-bucket.sh
+
+      - name: Build eventbrite_api Lambda package
+        working-directory: .
+        run: bash ./infra/scripts/build-eventbrite-api-package.sh
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.14.6
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        run: terraform validate -no-color
+
+      - name: Terraform plan
+        run: |
+          terraform plan -no-color -input=false -out=tfplan
+          terraform show -no-color tfplan > tfplan.txt
+          {
+            echo "## Terraform plan"
+            echo ""
+            echo '```text'
+            cat tfplan.txt
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+        env:
+          TF_IN_AUTOMATION: "true"
+
+      - name: Terraform apply
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.terraform_action == 'apply')
+        run: terraform apply -input=false -auto-approve tfplan
+        env:
+          TF_IN_AUTOMATION: "true"

@@ -1,0 +1,76 @@
+name: Terraform Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: "Escribe destroy-prod para continuar"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-prod-destroy
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/prod
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Enforce main branch
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "This workflow must run from main because the IAM trust policy only allows refs/heads/main."
+            exit 1
+          fi
+
+      - name: Validate confirmation
+        run: |
+          if [[ "${{ github.event.inputs.confirm_destroy }}" != "destroy-prod" ]]; then
+            echo "Confirmation mismatch. Expected destroy-prod."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::311923415472:role/GitHubActionsDeployRole
+          role-session-name: github-actions-terraform-destroy
+          allowed-account-ids: 311923415472
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Bootstrap Terraform state bucket
+        run: bash ../scripts/bootstrap-state-bucket.sh
+
+      - name: Build eventbrite_api Lambda package
+        working-directory: .
+        run: bash ./infra/scripts/build-eventbrite-api-package.sh
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.14.6
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform destroy
+        run: terraform destroy -input=false -auto-approve
+        env:
+          TF_IN_AUTOMATION: "true"
