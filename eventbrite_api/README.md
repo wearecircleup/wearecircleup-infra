@@ -31,7 +31,7 @@ not as the standard event-instantiation workflow.
 - `GET /events/{event_id}`: detail.
 - `POST /events`: creates an event, creates a free ticket, then publishes it by default.
 - `PATCH /events/{event_id}`: updates supplied fields.
-- `DELETE /events/{event_id}?confirm=true`: deletes an event. Eventbrite retains a readable record with status `deleted`.
+- `DELETE /events/{event_id}?confirm=true`: deletes an event. A subsequent read can surface either a readable record with status `deleted` or an eventual-consistency `404`; clients should treat both as a successful delete outcome.
 - `GET /events/{event_id}/attendees`: paginated attendee list, including Eventbrite answers and check-in state.
 - `GET /events/{event_id}/attendees/{attendee_id}`: attendee detail, including barcode and check-in status from Eventbrite.
 - `GET /events/{event_id}/attendance`: registered, checked-in, not checked-in, unpaid and attendance rate.

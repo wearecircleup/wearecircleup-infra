@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -12,6 +13,9 @@ from app.config import Settings, get_settings
 from app.exports import attendee_export
 from app.instantiation import EventInstantiationManager
 from app.schemas import ImageUploadCompletion, EventCreate, EventInstantiation, EventUpdate, VenueCreate, VenueUpdate
+
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -313,5 +317,14 @@ async def delete_event(
 ) -> Response:
     if not confirm:
         raise HTTPException(status_code=400, detail="Set confirm=true to permanently delete this event.")
-    await client.delete_event(event_id)
+    logger.info("Deleting Eventbrite event %s", event_id)
+    try:
+        await client.delete_event(event_id)
+    except EventbriteAPIError:
+        logger.exception("Eventbrite rejected delete for event %s", event_id)
+        raise
+    except Exception:
+        logger.exception("Unexpected delete failure for event %s", event_id)
+        raise
+    logger.info("Deleted Eventbrite event %s", event_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

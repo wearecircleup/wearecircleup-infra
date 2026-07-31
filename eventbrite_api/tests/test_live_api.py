@@ -6,6 +6,7 @@ that same event in a finally block.
 
 import json
 import struct
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -16,6 +17,24 @@ from app.main import app
 
 
 pytestmark = pytest.mark.live
+
+
+def assert_event_removed_or_marked_deleted(client: TestClient, event_id: str) -> None:
+    """Eventbrite can expose a just-deleted event as deleted or as missing."""
+    last_response = None
+    for _ in range(5):
+        response = client.get(f"/events/{event_id}")
+        if response.status_code == 404:
+            return
+        if response.status_code == 200 and response.json().get("status") == "deleted":
+            return
+        last_response = response
+        time.sleep(0.5)
+    assert last_response is not None
+    pytest.fail(
+        f"Expected Eventbrite to expose deleted event {event_id} as missing or deleted, "
+        f"got {last_response.status_code}: {last_response.text}"
+    )
 
 
 def test_full_eventbrite_crud_lifecycle() -> None:
@@ -73,9 +92,7 @@ def test_full_eventbrite_crud_lifecycle() -> None:
                 deleted = client.delete(f"/events/{event_id}", params={"confirm": "true"})
                 assert deleted.status_code == 204, deleted.text
 
-        deleted_event = client.get(f"/events/{event_id}")
-        assert deleted_event.status_code == 200
-        assert deleted_event.json()["status"] == "deleted"
+        assert_event_removed_or_marked_deleted(client, event_id)
 
 
 def test_controlled_instantiation_content_questions_and_image_lifecycle() -> None:

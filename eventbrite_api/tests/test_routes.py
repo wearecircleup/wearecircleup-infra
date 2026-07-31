@@ -131,6 +131,13 @@ def test_list_venues_never_forwards_unsupported_page_size(client_and_fake) -> No
     assert fake.calls[-1] == ("list_venues", {"page": 2})
 
 
+def test_event_delete_returns_204_when_eventbrite_accepts_the_delete(client_and_fake) -> None:
+    client, fake = client_and_fake
+    response = client.delete("/events/event-1", params={"confirm": "true"})
+    assert response.status_code == 204
+    assert fake.calls[-1] == ("delete_event", "event-1")
+
+
 def test_image_completion_accepts_the_studio_json_body(client_and_fake) -> None:
     client, fake = client_and_fake
     crop_mask = {"top_left": {"x": 0, "y": 0}, "width": 1200, "height": 600}
