@@ -52,3 +52,8 @@ output "youform_webhook_url" {
   description = "Full webhook URL to configure in YouForm."
   value       = module.youform_webhook.webhook_url
 }
+
+output "youform_webhook_submissions_table_name" {
+  description = "DynamoDB table name storing normalized YouForm submissions."
+  value       = module.youform_submissions_dynamodb.table_name
+}

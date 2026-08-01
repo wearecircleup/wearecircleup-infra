@@ -13,6 +13,7 @@ locals {
   youform_webhook_lambda = "wearecircleup-prod-youform-webhook"
   youform_webhook_role   = "wearecircleup-prod-youform-webhook-role"
   youform_webhook_path   = "/webhooks/youform"
+  youform_webhook_table  = "wearecircleup-prod-youform-submissions"
 
   common_tags = {
     ManagedBy   = "terraform"

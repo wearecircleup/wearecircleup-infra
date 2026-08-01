@@ -27,3 +27,13 @@ variable "route_path" {
   description = "HTTP API route path for the webhook endpoint."
   type        = string
 }
+
+variable "submissions_table_arn" {
+  description = "DynamoDB table ARN used to store normalized YouForm submissions."
+  type        = string
+}
+
+variable "submissions_table_name" {
+  description = "DynamoDB table name used to store normalized YouForm submissions."
+  type        = string
+}

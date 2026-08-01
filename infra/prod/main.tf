@@ -27,15 +27,24 @@ module "eventbrite_api" {
   service_name           = "eventbrite-api"
 }
 
+module "youform_submissions_dynamodb" {
+  source = "../modules/youform-submissions-dynamodb"
+
+  table_name  = local.youform_webhook_table
+  common_tags = local.common_tags
+}
+
 module "youform_webhook" {
   source = "../modules/youform-webhook"
 
-  api_name             = local.youform_webhook_api
-  common_tags          = local.common_tags
-  lambda_function_name = local.youform_webhook_lambda
-  lambda_package_path  = abspath("${path.root}/../artifacts/youform-webhook/youform_webhook_lambda.zip")
-  lambda_role_name     = local.youform_webhook_role
-  route_path           = local.youform_webhook_path
+  api_name               = local.youform_webhook_api
+  common_tags            = local.common_tags
+  lambda_function_name   = local.youform_webhook_lambda
+  lambda_package_path    = abspath("${path.root}/../artifacts/youform-webhook/youform_webhook_lambda.zip")
+  lambda_role_name       = local.youform_webhook_role
+  route_path             = local.youform_webhook_path
+  submissions_table_arn  = module.youform_submissions_dynamodb.table_arn
+  submissions_table_name = module.youform_submissions_dynamodb.table_name
 }
 
 moved {

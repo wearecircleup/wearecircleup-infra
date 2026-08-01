@@ -13,6 +13,7 @@ Este setup deja un flujo basico y profesional para Terraform con GitHub Actions 
 - Bucket de validacion: `wearecircleup-terraform-check-311923415472-us-east-1`
 - Secret de Eventbrite: `wearecircleup/prod/eventbrite`
 - API cloud de Eventbrite: `wearecircleup-prod-eventbrite-api`
+- Tabla DynamoDB de YouForm: `wearecircleup-prod-youform-submissions`
 
 ## Estructura
 
@@ -21,6 +22,7 @@ Este setup deja un flujo basico y profesional para Terraform con GitHub Actions 
 - `infra/modules/secretsmanager-eventbrite`: modulo del servicio Secrets Manager para Eventbrite
 - `infra/modules/eventbrite-api`: modulo del servicio Eventbrite API en Lambda + API Gateway
 - `infra/modules/youform-webhook`: modulo del receptor de webhooks de YouForm en Lambda + API Gateway
+- `infra/modules/youform-submissions-dynamodb`: modulo de DynamoDB para submissions normalizados de YouForm
 - `infra/scripts/bootstrap-state-bucket.sh`: asegura que el bucket de state exista antes de ejecutar Terraform
 - `infra/scripts/build-eventbrite-api-package.sh`: empaqueta `eventbrite_api` para Lambda
 - `infra/scripts/build-youform-webhook-package.sh`: empaqueta `youform_webhook` para Lambda

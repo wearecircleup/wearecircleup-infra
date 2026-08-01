@@ -22,6 +22,26 @@ resource "aws_iam_role_policy_attachment" "basic_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+resource "aws_iam_role_policy" "dynamodb" {
+  name = "${var.lambda_function_name}-dynamodb"
+  role = aws_iam_role.lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem"
+        ]
+        Resource = [
+          var.submissions_table_arn
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.lambda_function_name}"
   retention_in_days = 14
@@ -39,6 +59,12 @@ resource "aws_lambda_function" "this" {
   filename      = var.lambda_package_path
 
   source_code_hash = filebase64sha256(var.lambda_package_path)
+
+  environment {
+    variables = {
+      SUBMISSIONS_TABLE_NAME = var.submissions_table_name
+    }
+  }
 
   depends_on = [
     aws_cloudwatch_log_group.lambda

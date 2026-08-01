@@ -10,5 +10,5 @@ output "lambda_function_name" {
 
 output "webhook_url" {
   description = "Full URL to configure in YouForm."
-  value       = "${aws_apigatewayv2_stage.default.invoke_url}${var.route_path}"
+  value       = "${trimsuffix(aws_apigatewayv2_stage.default.invoke_url, "/")}${var.route_path}"
 }
