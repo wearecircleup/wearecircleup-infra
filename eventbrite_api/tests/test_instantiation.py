@@ -121,17 +121,24 @@ def test_manager_runs_event_ticket_questions_content_then_validation() -> None:
     assert "summary" not in client.created_event
     assert result["questions"][0]["ticket_classes"] == [{"id": "ticket-1"}]
     assert result["questions"][0]["question"]["html"] == "Que quieres aprender?"
+    assert result["questions"][0]["respondent"] == "attendee"
     assert result["questions"][0]["type"] == "text"
+    assert result["questions"][1]["respondent"] == "attendee"
     assert result["questions"][1]["type"] == "dropdown"
+    assert result["questions"][2]["respondent"] == "attendee"
     assert result["questions"][2]["type"] == "dropdown"
     assert "¿Quieres recibir actualizaciones por SMS?" in result["questions"][3]["question"]["html"]
+    assert result["questions"][3]["respondent"] == "attendee"
     assert result["questions"][3]["type"] == "text"
     assert result["questions"][3]["required"] is False
     assert "menor de edad" in result["questions"][4]["question"]["html"]
+    assert result["questions"][4]["respondent"] == "attendee"
     assert result["questions"][4]["choices"][0]["answer"]["html"] == "Entiendo"
     assert "tratamiento de mis datos" in result["questions"][5]["question"]["html"]
+    assert result["questions"][5]["respondent"] == "attendee"
     assert result["questions"][5]["choices"][0]["answer"]["html"] == "Acepto"
     assert "consumo mínimo" in result["questions"][6]["question"]["html"]
+    assert result["questions"][6]["respondent"] == "attendee"
     assert result["questions"][6]["choices"][0]["answer"]["html"] == "Entiendo"
     assert client.structured_content["version"] == 1
     assert client.structured_content["content"]["purpose"] == "listing"

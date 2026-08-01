@@ -90,57 +90,63 @@ def _answer_value(answer: dict[str, Any]) -> Any:
     return answer.get("value")
 
 
-def _normalize_profile_answers(profile: dict[str, Any]) -> list[dict[str, Any]]:
-    profile_fields = [
-        ("Nombre completo", profile.get("name")),
-        ("Nombre", profile.get("first_name")),
-        ("Apellido", profile.get("last_name")),
-        ("Correo", profile.get("email")),
-    ]
-    normalized: list[dict[str, Any]] = []
-    seen: set[tuple[str, Any]] = set()
-    for question, answer in profile_fields:
-        if answer in (None, ""):
-            continue
-        key = (question, answer)
-        if key in seen:
-            continue
-        seen.add(key)
-        normalized.append({"question": question, "answer": answer, "source": "profile"})
-    return normalized
+def _question_text(question: Any) -> str | None:
+    if isinstance(question, str):
+        text = question.strip()
+        return text or None
+    if isinstance(question, dict):
+        for key in ("html", "text", "label"):
+            value = question.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def _stringify_answer_value(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, bool):
+        return "Sí" if value else "No"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        parts = [item for item in (_stringify_answer_value(item) for item in value) if item]
+        return ", ".join(parts) or None
+    if isinstance(value, dict):
+        for key in ("html", "text", "name", "email", "value"):
+            candidate = _stringify_answer_value(value.get(key))
+            if candidate:
+                return candidate
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return str(value)
 
 
 def _normalize_custom_answers(answers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
     for answer in answers:
-        question = answer.get("question")
-        value = _answer_value(answer)
-        if not question or value in (None, ""):
+        question = _question_text(answer.get("question"))
+        value = _stringify_answer_value(_answer_value(answer))
+        if not question or not value:
             continue
-        normalized.append({"question": str(question), "answer": value, "source": "custom"})
+        key = (question, value)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append({"question": question, "answer": value})
     return normalized
 
 
 def _normalize_attendee(attendee: dict[str, Any]) -> dict[str, Any]:
     profile = attendee.get("profile") or {}
-    custom_answers = attendee.get("answers") or []
     return {
         "attendee_id": attendee.get("id"),
-        "event_id": attendee.get("event_id"),
-        "order_id": attendee.get("order_id"),
-        "ticket_class_id": attendee.get("ticket_class_id"),
         "ticket_class_name": attendee.get("ticket_class_name"),
-        "checked_in": attendee.get("checked_in", False),
-        "cancelled": attendee.get("cancelled", False),
-        "refunded": attendee.get("refunded", False),
-        "status": attendee.get("status"),
-        "profile": {
-            "name": profile.get("name"),
-            "first_name": profile.get("first_name"),
-            "last_name": profile.get("last_name"),
-            "email": profile.get("email"),
-        },
-        "answers": _normalize_profile_answers(profile) + _normalize_custom_answers(custom_answers),
+        "email": profile.get("email"),
+        "answers": _normalize_custom_answers(attendee.get("answers") or []),
     }
 
 
@@ -154,6 +160,36 @@ def _fetch_all_order_attendees(order_id: str, token: str) -> list[dict[str, Any]
         if not (response.get("pagination") or {}).get("has_more_items"):
             return attendees
         page += 1
+
+
+def _fetch_attendee_detail(event_id: str, attendee_id: str, token: str) -> dict[str, Any]:
+    base_url = os.getenv("EVENTBRITE_API_BASE_URL", "https://www.eventbriteapi.com/v3").rstrip("/")
+    return _request_json(f"{base_url}/events/{event_id}/attendees/{attendee_id}/", token)
+
+
+def _fetch_detailed_attendees(order_id: str, event_id: str | None, token: str) -> list[dict[str, Any]]:
+    attendees = _fetch_all_order_attendees(order_id, token)
+    detailed_attendees: list[dict[str, Any]] = []
+    for attendee in attendees:
+        attendee_id = attendee.get("id")
+        attendee_event_id = attendee.get("event_id") or event_id
+        if not attendee_id or not attendee_event_id:
+            detailed_attendees.append(attendee)
+            continue
+        try:
+            attendee_detail = _fetch_attendee_detail(str(attendee_event_id), str(attendee_id), token)
+        except RuntimeError:
+            logger.warning(
+                "Falling back to order attendee payload for attendee %s on event %s.",
+                attendee_id,
+                attendee_event_id,
+            )
+            detailed_attendees.append(attendee)
+            continue
+        merged_attendee = dict(attendee)
+        merged_attendee.update(attendee_detail)
+        detailed_attendees.append(merged_attendee)
+    return detailed_attendees
 
 
 def _build_submission_item(
@@ -171,17 +207,16 @@ def _build_submission_item(
         "order_status": order.get("status"),
         "order_created": order.get("created"),
         "order_changed": order.get("changed"),
-        "purchaser_name": order.get("name"),
-        "purchaser_first_name": order.get("first_name"),
-        "purchaser_last_name": order.get("last_name"),
-        "purchaser_email": order.get("email"),
-        "webhook_object": "order",
-        "webhook_action": "place",
-        "webhook_api_url": webhook_payload.get("api_url"),
-        "webhook_received_at": received_at,
-        "attendee_count": len(attendees),
+        "buyer": {
+            "name": order.get("name"),
+            "email": order.get("email"),
+        },
         "attendees": [_normalize_attendee(attendee) for attendee in attendees],
-        "raw_webhook": webhook_payload,
+        "webhook": {
+            "api_url": webhook_payload.get("api_url"),
+            "received_at": received_at,
+            "action": ((webhook_payload.get("config") or {}).get("action")),
+        },
     }
 
 
@@ -202,7 +237,7 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
 
     token = _eventbrite_private_token()
     order = _request_json(str(api_url), token)
-    attendees = _fetch_all_order_attendees(order_id, token)
+    attendees = _fetch_detailed_attendees(order_id, order.get("event_id"), token)
     received_at = (
         (request_context or {}).get("time")
         or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
