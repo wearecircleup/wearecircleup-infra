@@ -7,6 +7,7 @@ on:
     paths:
       - "infra/**"
       - "eventbrite_api/**"
+      - "eventbrite_order_webhook/**"
       - ".github/workflows/terraform-plan-apply.yml"
       - ".github/workflows/terraform-destroy.yml"
   workflow_dispatch:
@@ -65,6 +66,10 @@ jobs:
       - name: Build eventbrite_api Lambda package
         working-directory: .
         run: bash ./infra/scripts/build-eventbrite-api-package.sh
+
+      - name: Build eventbrite_order_webhook Lambda package
+        working-directory: .
+        run: bash ./infra/scripts/build-eventbrite-order-webhook-package.sh
 
       - name: Build youform_webhook Lambda package
         working-directory: .

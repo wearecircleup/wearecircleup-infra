@@ -38,6 +38,26 @@ output "eventbrite_api_lambda_function_name" {
   value       = module.eventbrite_api.lambda_function_name
 }
 
+output "eventbrite_order_webhook_lambda_function_name" {
+  description = "Lambda function name receiving Eventbrite order webhooks."
+  value       = module.eventbrite_order_webhook.lambda_function_name
+}
+
+output "eventbrite_order_webhook_api_endpoint" {
+  description = "Base HTTP API endpoint for the Eventbrite order webhook receiver."
+  value       = module.eventbrite_order_webhook.api_endpoint
+}
+
+output "eventbrite_order_webhook_url" {
+  description = "Full webhook URL to configure in Eventbrite for Order Place."
+  value       = module.eventbrite_order_webhook.webhook_url
+}
+
+output "eventbrite_order_webhook_submissions_table_name" {
+  description = "DynamoDB table name storing normalized Eventbrite order submissions."
+  value       = module.eventbrite_order_submissions_dynamodb.table_name
+}
+
 output "youform_webhook_lambda_function_name" {
   description = "Lambda function name receiving YouForm submissions."
   value       = module.youform_webhook.lambda_function_name
