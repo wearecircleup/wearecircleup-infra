@@ -14,6 +14,10 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
+def _log_json(message: str, payload: dict[str, Any]) -> None:
+    logger.info("%s: %s", message, json.dumps(payload, ensure_ascii=False, default=str))
+
+
 def _dynamodb_table(table_name: str):
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     return boto3.resource("dynamodb", region_name=region).Table(table_name)
@@ -82,6 +86,16 @@ def _extract_order_id(api_url: str) -> str | None:
     return segments[2]
 
 
+def _extract_attendee_target(api_url: str) -> tuple[str, str] | None:
+    parsed = urlparse(api_url)
+    if parsed.netloc not in {"www.eventbriteapi.com", "eventbriteapi.com"}:
+        return None
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if len(segments) < 5 or segments[0] != "v3" or segments[1] != "events" or segments[3] != "attendees":
+        return None
+    return segments[2], segments[4]
+
+
 def _answer_value(answer: dict[str, Any]) -> Any:
     if "answer" in answer:
         return answer.get("answer")
@@ -109,7 +123,7 @@ def _stringify_answer_value(value: Any) -> str | None:
         text = value.strip()
         return text or None
     if isinstance(value, bool):
-        return "Sí" if value else "No"
+        return "Si" if value else "No"
     if isinstance(value, (int, float)):
         return str(value)
     if isinstance(value, list):
@@ -150,13 +164,54 @@ def _normalize_attendee(attendee: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _summarize_attendee(attendee: dict[str, Any]) -> dict[str, Any]:
+    profile = attendee.get("profile") or {}
+    answers = attendee.get("answers") or []
+    return {
+        "id": attendee.get("id"),
+        "event_id": attendee.get("event_id"),
+        "order_id": attendee.get("order_id"),
+        "status": attendee.get("status"),
+        "ticket_class_name": attendee.get("ticket_class_name"),
+        "email": profile.get("email"),
+        "answers_count": len(answers),
+        "answers": [
+            {
+                "question": _question_text(answer.get("question")),
+                "value": _stringify_answer_value(_answer_value(answer)),
+            }
+            for answer in answers
+        ],
+    }
+
+
+def _summarize_question(question: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": question.get("id"),
+        "type": question.get("type"),
+        "required": question.get("required"),
+        "respondent": question.get("respondent"),
+        "question": _question_text(question.get("question")),
+    }
+
+
 def _fetch_all_order_attendees(order_id: str, token: str) -> list[dict[str, Any]]:
     base_url = os.getenv("EVENTBRITE_API_BASE_URL", "https://www.eventbriteapi.com/v3").rstrip("/")
     attendees: list[dict[str, Any]] = []
     page = 1
     while True:
         response = _request_json(f"{base_url}/orders/{order_id}/attendees/?page={page}", token)
-        attendees.extend(response.get("attendees", []))
+        page_attendees = response.get("attendees", [])
+        attendees.extend(page_attendees)
+        _log_json(
+            "Eventbrite order attendees page fetched",
+            {
+                "order_id": order_id,
+                "page": page,
+                "attendees_count": len(page_attendees),
+                "attendees": [_summarize_attendee(attendee) for attendee in page_attendees],
+            },
+        )
         if not (response.get("pagination") or {}).get("has_more_items"):
             return attendees
         page += 1
@@ -164,7 +219,31 @@ def _fetch_all_order_attendees(order_id: str, token: str) -> list[dict[str, Any]
 
 def _fetch_attendee_detail(event_id: str, attendee_id: str, token: str) -> dict[str, Any]:
     base_url = os.getenv("EVENTBRITE_API_BASE_URL", "https://www.eventbriteapi.com/v3").rstrip("/")
-    return _request_json(f"{base_url}/events/{event_id}/attendees/{attendee_id}/", token)
+    attendee = _request_json(f"{base_url}/events/{event_id}/attendees/{attendee_id}/", token)
+    _log_json(
+        "Eventbrite attendee detail fetched",
+        {
+            "event_id": event_id,
+            "attendee_id": attendee_id,
+            "attendee": _summarize_attendee(attendee),
+        },
+    )
+    return attendee
+
+
+def _fetch_event_questions(event_id: str, token: str) -> list[dict[str, Any]]:
+    base_url = os.getenv("EVENTBRITE_API_BASE_URL", "https://www.eventbriteapi.com/v3").rstrip("/")
+    response = _request_json(f"{base_url}/events/{event_id}/questions/", token)
+    questions = response.get("questions", [])
+    _log_json(
+        "Eventbrite event questions fetched",
+        {
+            "event_id": event_id,
+            "questions_count": len(questions),
+            "questions": [_summarize_question(question) for question in questions],
+        },
+    )
+    return questions
 
 
 def _fetch_detailed_attendees(order_id: str, event_id: str | None, token: str) -> list[dict[str, Any]]:
@@ -189,6 +268,15 @@ def _fetch_detailed_attendees(order_id: str, event_id: str | None, token: str) -
         merged_attendee = dict(attendee)
         merged_attendee.update(attendee_detail)
         detailed_attendees.append(merged_attendee)
+    _log_json(
+        "Eventbrite detailed attendees ready",
+        {
+            "order_id": order_id,
+            "event_id": event_id,
+            "attendees_count": len(detailed_attendees),
+            "attendees": [_summarize_attendee(attendee) for attendee in detailed_attendees],
+        },
+    )
     return detailed_attendees
 
 
@@ -220,32 +308,91 @@ def _build_submission_item(
     }
 
 
+def _resolve_order_context(api_url: str, token: str) -> tuple[dict[str, Any], str]:
+    order_id = _extract_order_id(api_url)
+    if order_id:
+        order = _request_json(api_url, token)
+        _log_json(
+            "Eventbrite order fetched from webhook api_url",
+            {
+                "api_url": api_url,
+                "order_id": order.get("id"),
+                "event_id": order.get("event_id"),
+                "status": order.get("status"),
+                "email": order.get("email"),
+                "changed": order.get("changed"),
+            },
+        )
+        return order, str(order["id"])
+
+    attendee_target = _extract_attendee_target(api_url)
+    if attendee_target:
+        event_id, attendee_id = attendee_target
+        attendee = _fetch_attendee_detail(event_id, attendee_id, token)
+        derived_order_id = attendee.get("order_id")
+        if not derived_order_id:
+            raise RuntimeError("Eventbrite attendee payload did not include order_id.")
+        base_url = os.getenv("EVENTBRITE_API_BASE_URL", "https://www.eventbriteapi.com/v3").rstrip("/")
+        order = _request_json(f"{base_url}/orders/{derived_order_id}/", token)
+        _log_json(
+            "Eventbrite order fetched from attendee webhook",
+            {
+                "api_url": api_url,
+                "event_id": event_id,
+                "attendee_id": attendee_id,
+                "order_id": order.get("id"),
+                "status": order.get("status"),
+                "email": order.get("email"),
+                "changed": order.get("changed"),
+            },
+        )
+        return order, str(order["id"])
+
+    raise RuntimeError(f"unsupported_api_url: {api_url}")
+
+
 def _store_order_submission(webhook_payload: dict[str, Any], request_context: dict[str, Any] | None) -> dict[str, Any]:
     api_url = webhook_payload.get("api_url")
     if not api_url:
         logger.info("Skipping Eventbrite webhook persistence because api_url is missing.")
         return {"stored": False, "reason": "missing_api_url"}
 
-    order_id = _extract_order_id(str(api_url))
-    if not order_id:
-        logger.info("Skipping Eventbrite webhook persistence because api_url is not an order URL: %s", api_url)
-        return {"stored": False, "reason": "unsupported_api_url"}
-
     table_name = os.getenv("SUBMISSIONS_TABLE_NAME")
     if not table_name:
         raise RuntimeError("SUBMISSIONS_TABLE_NAME is not configured.")
 
     token = _eventbrite_private_token()
-    order = _request_json(str(api_url), token)
-    attendees = _fetch_detailed_attendees(order_id, order.get("event_id"), token)
+    order, order_id = _resolve_order_context(str(api_url), token)
+    event_id = order.get("event_id")
+    if event_id:
+        try:
+            _fetch_event_questions(str(event_id), token)
+        except RuntimeError:
+            logger.warning("Failed to fetch Eventbrite event questions for event %s.", event_id)
+    attendees = _fetch_detailed_attendees(order_id, event_id, token)
     received_at = (
         (request_context or {}).get("time")
         or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     )
     item = _build_submission_item(webhook_payload, order, attendees, received_at)
     _dynamodb_table(table_name).put_item(Item=item)
-    logger.info("Stored Eventbrite order %s in DynamoDB table %s.", order_id, table_name)
-    return {"stored": True, "order_id": order_id, "attendee_count": len(attendees)}
+    _log_json(
+        "Stored Eventbrite submission in DynamoDB",
+        {
+            "table_name": table_name,
+            "order_id": order_id,
+            "event_id": event_id,
+            "attendee_count": len(attendees),
+            "webhook_action": (webhook_payload.get("config") or {}).get("action"),
+            "stored_item": item,
+        },
+    )
+    return {
+        "stored": True,
+        "order_id": order_id,
+        "attendee_count": len(attendees),
+        "webhook_action": (webhook_payload.get("config") or {}).get("action"),
+    }
 
 
 def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
@@ -267,19 +414,15 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         logger.exception("Failed to process Eventbrite order webhook.")
         return _json_response(500, {"ok": False, "detail": str(exc)})
 
-    logger.info(
-        "Received Eventbrite order webhook: %s",
-        json.dumps(
-            {
-                "request_context": event.get("requestContext"),
-                "headers": event.get("headers"),
-                "query_string_parameters": event.get("queryStringParameters"),
-                "parsed_body": webhook_payload,
-                "result": result,
-            },
-            ensure_ascii=False,
-            default=str,
-        ),
+    _log_json(
+        "Received Eventbrite webhook",
+        {
+            "request_context": event.get("requestContext"),
+            "headers": event.get("headers"),
+            "query_string_parameters": event.get("queryStringParameters"),
+            "parsed_body": webhook_payload,
+            "result": result,
+        },
     )
 
     return _json_response(200, {"ok": True, **result})
