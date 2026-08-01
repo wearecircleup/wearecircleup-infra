@@ -115,7 +115,7 @@ def test_instantiation_validates_the_fixed_contract() -> None:
 def test_manager_runs_event_ticket_questions_content_then_validation() -> None:
     client = FakeEventbriteClient()
     result = asyncio.run(manager(client).create_and_validate(EventInstantiation(**valid_payload())))
-    assert client.calls == ["event", "ticket", "question", "question", "question", "question", "question", "question", "content", "content_readback", "validate"]
+    assert client.calls == ["event", "ticket", "question", "question", "question", "question", "question", "question", "question", "content", "content_readback", "validate"]
     assert result["validated"] is True
     assert result["ticket"]["quantity_total"] == 3
     assert "summary" not in client.created_event
@@ -124,13 +124,15 @@ def test_manager_runs_event_ticket_questions_content_then_validation() -> None:
     assert result["questions"][0]["type"] == "text"
     assert result["questions"][1]["type"] == "dropdown"
     assert result["questions"][2]["type"] == "dropdown"
-    assert "¿Quieres recibir actualizaciones del evento por SMS?" in result["questions"][3]["question"]["html"]
+    assert "¿Quieres recibir actualizaciones por SMS?" in result["questions"][3]["question"]["html"]
     assert result["questions"][3]["type"] == "text"
     assert result["questions"][3]["required"] is False
-    assert "tratamiento de mis datos" in result["questions"][4]["question"]["html"]
-    assert result["questions"][4]["choices"][0]["answer"]["html"] == "Acepto"
-    assert "consumo mínimo" in result["questions"][5]["question"]["html"]
+    assert "menor de edad" in result["questions"][4]["question"]["html"]
+    assert result["questions"][4]["choices"][0]["answer"]["html"] == "Entiendo"
+    assert "tratamiento de mis datos" in result["questions"][5]["question"]["html"]
     assert result["questions"][5]["choices"][0]["answer"]["html"] == "Acepto"
+    assert "consumo mínimo" in result["questions"][6]["question"]["html"]
+    assert result["questions"][6]["choices"][0]["answer"]["html"] == "Entiendo"
     assert client.structured_content["version"] == 1
     assert client.structured_content["content"]["purpose"] == "listing"
     assert client.structured_content["content"]["publish"] is True

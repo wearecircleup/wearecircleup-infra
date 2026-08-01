@@ -180,16 +180,20 @@ EDUCATION_LEVEL_CHOICES = [
     "Doctorado",
     "Otro",
 ]
-PHONE_QUESTION = "¿Quieres recibir actualizaciones del evento por SMS? Déjanos tu número (opcional). Lo usaremos solo para este evento."
+PHONE_QUESTION = "¿Quieres recibir actualizaciones por SMS? Déjanos tu número. Lo usaremos solo para este evento."
 AGE_RANGE_QUESTION = "¿Cuál es tu rango de edad?"
 AGE_RANGE_CHOICES = [
-    "14 a 17 años — Te enviaremos una autorización para tu acudiente. Preséntala validada el día del evento para realizar el check-in.",
+    "14 a 17 años",
     "18 a 24 años",
     "25 a 34 años",
     "35 a 44 años",
     "45 a 54 años",
     "55 años o más",
 ]
+MINOR_AUTHORIZATION_QUESTION = (
+    "Si eres menor de edad, te enviaremos una autorización para tu acudiente. "
+    "Debe estar firmada digitalmente para tu check-in."
+)
 MULTIPLE_CHOICE_TYPES = {"radio", "dropdown", "checkbox"}
 
 
@@ -331,6 +335,13 @@ class EventInstantiation(BaseModel):
                 "ticket_classes": [],
             },
             {
+                "question": {"html": MINOR_AUTHORIZATION_QUESTION},
+                "type": "checkbox",
+                "required": True,
+                "choices": [{"answer": {"html": "Entiendo"}}],
+                "ticket_classes": [],
+            },
+            {
                 "question": {
                     "html": "¿Aceptas la información del evento y las reglas de convivencia del lugar?<br><br><em>Acepto el tratamiento de mis datos, según la Ley 1581 de 2012, solo para mi inscripción y mensajes de este evento. No se comparten con terceros.</em>",
                 },
@@ -345,11 +356,11 @@ class EventInstantiation(BaseModel):
             questions.append(
                 {
                     "question": {
-                        "html": f"<em>Participar en este evento no tiene costo.</em><br><br><em>¿Aceptas y comprendes que el lugar anfitrión solicita un consumo mínimo de {amount} COP, cobrado por el lugar y no por Circle Up?</em>",
+                        "html": f"Entiendo que el lugar anfitrión solicita un consumo mínimo de {amount} COP para consumo propio, cobrado por el lugar y no por Circle Up Community?",
                     },
                     "type": "checkbox",
                     "required": True,
-                    "choices": [{"answer": {"html": "Acepto"}}],
+                    "choices": [{"answer": {"html": "Entiendo"}}],
                     "ticket_classes": [],
                 }
             )
@@ -392,6 +403,3 @@ class EventInstantiation(BaseModel):
                 }
             ],
         }
-
-
-

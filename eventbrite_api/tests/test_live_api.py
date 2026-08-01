@@ -132,7 +132,7 @@ def test_controlled_instantiation_content_questions_and_image_lifecycle() -> Non
             created_body = created.json()
             event_id = str(created_body["event"]["id"])
             assert created_body["validated"] is True
-            assert len(created_body["questions"]) == 5
+            assert len(created_body["questions"]) == 6
 
             instructions = client.get(f"/events/{event_id}/image/upload-request")
             assert instructions.status_code == 200, instructions.text
