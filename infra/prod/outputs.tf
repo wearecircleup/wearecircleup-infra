@@ -37,3 +37,18 @@ output "eventbrite_api_lambda_function_name" {
   description = "Lambda function name serving the Eventbrite API."
   value       = module.eventbrite_api.lambda_function_name
 }
+
+output "youform_webhook_lambda_function_name" {
+  description = "Lambda function name receiving YouForm submissions."
+  value       = module.youform_webhook.lambda_function_name
+}
+
+output "youform_webhook_api_endpoint" {
+  description = "Base HTTP API endpoint for the YouForm webhook receiver."
+  value       = module.youform_webhook.api_endpoint
+}
+
+output "youform_webhook_url" {
+  description = "Full webhook URL to configure in YouForm."
+  value       = module.youform_webhook.webhook_url
+}

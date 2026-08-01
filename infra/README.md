@@ -20,8 +20,10 @@ Este setup deja un flujo basico y profesional para Terraform con GitHub Actions 
 - `infra/modules/s3-validation`: modulo del servicio S3 para el bucket de validacion
 - `infra/modules/secretsmanager-eventbrite`: modulo del servicio Secrets Manager para Eventbrite
 - `infra/modules/eventbrite-api`: modulo del servicio Eventbrite API en Lambda + API Gateway
+- `infra/modules/youform-webhook`: modulo del receptor de webhooks de YouForm en Lambda + API Gateway
 - `infra/scripts/bootstrap-state-bucket.sh`: asegura que el bucket de state exista antes de ejecutar Terraform
 - `infra/scripts/build-eventbrite-api-package.sh`: empaqueta `eventbrite_api` para Lambda
+- `infra/scripts/build-youform-webhook-package.sh`: empaqueta `youform_webhook` para Lambda
 
 ## Flujos
 
@@ -33,6 +35,7 @@ Workflow: `.github/workflows/terraform-plan-apply.yml`
   - asume el role por OIDC
   - crea/configura el bucket remoto de state si no existe
   - empaqueta `eventbrite_api` para Lambda
+  - empaqueta `youform_webhook` para Lambda
   - corre `terraform init`, `validate`, `plan` y `apply`
 - En `workflow_dispatch`:
   - puedes correr `plan` o `apply` manualmente

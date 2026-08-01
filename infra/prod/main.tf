@@ -27,6 +27,17 @@ module "eventbrite_api" {
   service_name           = "eventbrite-api"
 }
 
+module "youform_webhook" {
+  source = "../modules/youform-webhook"
+
+  api_name             = local.youform_webhook_api
+  common_tags          = local.common_tags
+  lambda_function_name = local.youform_webhook_lambda
+  lambda_package_path  = abspath("${path.root}/../artifacts/youform-webhook/youform_webhook_lambda.zip")
+  lambda_role_name     = local.youform_webhook_role
+  route_path           = local.youform_webhook_path
+}
+
 moved {
   from = aws_s3_bucket.validation
   to   = module.s3_validation.aws_s3_bucket.this

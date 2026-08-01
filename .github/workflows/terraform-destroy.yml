@@ -61,6 +61,10 @@ jobs:
         working-directory: .
         run: bash ./infra/scripts/build-eventbrite-api-package.sh
 
+      - name: Build youform_webhook Lambda package
+        working-directory: .
+        run: bash ./infra/scripts/build-youform-webhook-package.sh
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
         with:
