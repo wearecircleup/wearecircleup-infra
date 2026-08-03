@@ -75,7 +75,7 @@ resource "aws_s3_bucket_policy" "protect_signatures" {
         Principal = "*"
         Action = [
           "s3:PutLifecycleConfiguration",
-          "s3:DeleteBucketLifecycle"
+          "s3:DeleteBucket"
         ]
         Resource = aws_s3_bucket.this.arn
       }
