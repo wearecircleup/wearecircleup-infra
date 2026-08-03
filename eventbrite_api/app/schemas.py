@@ -194,7 +194,7 @@ AGE_RANGE_CHOICES = [
 MINOR_AUTHORIZATION_QUESTION = (
     "<em>Acepto que leí la sección NNA Primero, Siempre "
     "y entiendo que, si tengo entre 14 y 17 años, el formulario es obligatorio, debe ser diligenciado por mi representante legal "
-    "y debe completarse antes de registrar esta orden. De lo contrario, la inscripción queda sujeta a cancelación.</em>"
+    "y debe completarse antes de registrar esta orden o será invalidada.</em>"
 )
 MULTIPLE_CHOICE_TYPES = {"radio", "dropdown", "checkbox"}
 
