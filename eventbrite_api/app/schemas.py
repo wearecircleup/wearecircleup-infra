@@ -397,7 +397,11 @@ class EventInstantiation(BaseModel):
         )
         body_parts.append(
             "<h3>¿Qué debemos tener en cuenta según la edad?</h3>"
-            f'<p><em>Entre los 14 y 17 años, la participación requiere la autorización previa de su representante legal. Para menores de 14 años, el proceso requiere acompañamiento presencial del representante legal durante la actividad. Además, promovemos medidas de cuidado acordes con la protección integral de niñas, niños y adolescentes: no pedimos datos innecesarios, no tomamos fotos de menores de edad y procuramos entornos seguros con acompañamiento responsable. Si necesitas orientación, puedes escribirnos a <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>.</em></p>"
+            f"<p><em>Entre los 14 y 17 años, la participación requiere la autorización previa de su representante legal. "
+            "Para menores de 14 años, el proceso requiere acompañamiento presencial del representante legal durante la actividad. "
+            "Además, promovemos medidas de cuidado acordes con la protección integral de niñas, niños y adolescentes: no pedimos datos innecesarios, "
+            "no tomamos fotos de menores de edad y procuramos entornos seguros con acompañamiento responsable. "
+            f'Si necesitas orientación, puedes escribirnos a <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>.</em></p>'
         )
         body_parts.append(
             f'<p><b>Contacto:</b> <a href="{CONTACT_URL}">circleup.com.co</a> | <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a></p>'

@@ -71,7 +71,17 @@ uv run uvicorn app.main:app --reload --port 8000
 
 Open <http://127.0.0.1:8000/docs>. The API uses exported variables first, then the root `../.env.local`, then `./.env`. Copy `.env.example` to `.env` only if you want a self-contained local configuration.
 
+For faster local work, you can also keep service-only credentials in `eventbrite_api/.env.local`.
+Set `EVENTBRITE_RUNTIME_MODE=local` there to skip AWS Secrets Manager entirely and rely only on exported variables plus local env files.
+
 `uv sync` creates and maintains `.venv` from `pyproject.toml` and the locked dependency graph in `uv.lock`. Do not use `pip`, manual virtual-environment activation, or `requirements.txt` for this API.
+
+If this machine blocks access to uv's global cache or managed Python folders, point both into the repo before running commands:
+
+```powershell
+$env:UV_CACHE_DIR = "..\\.uv-cache"
+$env:UV_PYTHON_INSTALL_DIR = "..\\.uv-python"
+```
 
 `EVENTBRITE_DEFAULT_CURRENCY` defaults to `USD`, which Eventbrite accepts for
 this organization. A live validation on 2026-07-28 confirmed that `COP` is
@@ -98,6 +108,7 @@ Dates must include their UTC offset. `POST /events` has real side effects: it cr
 ## Tests
 
 ```powershell
+$env:EVENTBRITE_RUNTIME_MODE = "local"
 uv run pytest
 ```
 
@@ -111,6 +122,16 @@ update operations.
 $env:EVENTBRITE_LIVE_TEST = "1"
 uv run pytest -m live
 Remove-Item Env:EVENTBRITE_LIVE_TEST
+```
+
+If you are working on a locked-down Windows machine, keep uv fully inside the
+repo before the first run:
+
+```powershell
+$env:UV_CACHE_DIR = "..\\.uv-cache"
+$env:UV_PYTHON_INSTALL_DIR = "..\\.uv-python"
+$env:EVENTBRITE_RUNTIME_MODE = "local"
+uv run pytest -m "not live"
 ```
 
 Add mocked HTTPX tests before expanding the API or running bulk changes.

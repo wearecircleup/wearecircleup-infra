@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 API_ROOT = Path(__file__).resolve().parents[1]
 CIRCLE_UP_ORGANIZATION_ID = "2998243227926"
 CIRCLE_UP_ORGANIZER_ID = "121240412403"
+RUNTIME_MODES = {"auto", "local", "cloud"}
 
 
 def load_env_file(path: Path) -> None:
@@ -32,6 +33,7 @@ class Settings:
     default_currency: str
     api_auth_token: str | None = None
     api_base_url: str = "https://www.eventbriteapi.com/v3"
+    runtime_mode: str = "auto"
 
 
 def load_secret(secret_id: str) -> dict[str, str]:
@@ -47,10 +49,14 @@ def load_secret(secret_id: str) -> dict[str, str]:
 
 def get_settings() -> Settings:
     load_env_file(PROJECT_ROOT / ".env.local")
+    load_env_file(API_ROOT / ".env.local")
     load_env_file(API_ROOT / ".env")
+    runtime_mode = os.getenv("EVENTBRITE_RUNTIME_MODE", "auto").strip().lower() or "auto"
+    if runtime_mode not in RUNTIME_MODES:
+        raise RuntimeError("EVENTBRITE_RUNTIME_MODE must be one of: auto, local, cloud.")
     secret_values: dict[str, str] = {}
     secret_id = os.getenv("EVENTBRITE_SECRET_ID")
-    if secret_id:
+    if secret_id and runtime_mode != "local":
         secret_values = load_secret(secret_id)
     configured_organization_id = secret_values.get("EVENTBRITE_ORGANIZATION_ID") or os.getenv("EVENTBRITE_ORGANIZATION_ID")
     private_token = secret_values.get("EVENTBRITE_PRIVATE_TOKEN") or os.getenv("EVENTBRITE_PRIVATE_TOKEN")
@@ -67,4 +73,5 @@ def get_settings() -> Settings:
         private_token=private_token,
         default_currency=os.getenv("EVENTBRITE_DEFAULT_CURRENCY", "USD").upper(),
         api_auth_token=api_auth_token,
+        runtime_mode=runtime_mode,
     )
