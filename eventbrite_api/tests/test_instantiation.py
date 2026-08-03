@@ -127,13 +127,13 @@ def test_manager_runs_event_ticket_questions_content_then_validation() -> None:
     assert "NNA Primero, Siempre" in result["questions"][3]["question"]["html"]
     assert 'href="' not in result["questions"][3]["question"]["html"]
     assert result["questions"][3]["type"] == "checkbox"
-    assert result["questions"][3]["choices"][0]["answer"]["html"] == "Entiendo"
+    assert result["questions"][3]["choices"][0]["answer"]["html"] == "Acepto"
     assert "<em>" in result["questions"][3]["question"]["html"]
     assert "tratamiento de mis datos" in result["questions"][4]["question"]["html"]
     assert result["questions"][4]["choices"][0]["answer"]["html"] == "Acepto"
     assert "<em>" in result["questions"][4]["question"]["html"]
     assert "consumo mínimo" in result["questions"][5]["question"]["html"]
-    assert result["questions"][5]["choices"][0]["answer"]["html"] == "Entiendo"
+    assert result["questions"][5]["choices"][0]["answer"]["html"] == "Acepto"
     assert "<em>" in result["questions"][5]["question"]["html"]
     assert "respondent" not in result["questions"][0]
     assert "respondent" not in result["questions"][1]
@@ -160,7 +160,7 @@ def test_manager_runs_event_ticket_questions_content_then_validation() -> None:
     assert 'href="https://app.youform.com/forms/iamr7tnj"' in body
     assert "NNA significa niñas, niños y adolescentes." in body
     assert "Si la inscripción es para una persona menor de edad, te pedimos leer este punto con atención." in body
-    assert "debe ser diligenciado por su madre, padre o representante legal" in body
+    assert "debe ser diligenciado por el representante legal" in body
     assert "Debe completarse antes de inscribirse en Eventbrite" in body
     assert "podremos anular la inscripción y no será posible realizar el check-in" in body
     assert "Para menores de 14 años, el proceso requiere acompañamiento presencial del representante legal" in body

@@ -199,14 +199,23 @@ MINOR_AUTHORIZATION_QUESTION = (
 MULTIPLE_CHOICE_TYPES = {"radio", "dropdown", "checkbox"}
 
 
-def build_minor_authorization_form_url(event_url: str | None = None) -> str:
-    if not event_url:
+def build_minor_authorization_form_url(event_url: str | None = None, event_date: str | None = None) -> str:
+    if not event_url and not event_date:
         return MINOR_AUTHORIZATION_FORM_BASE_URL
-    return f"{MINOR_AUTHORIZATION_FORM_BASE_URL}?{urlencode({'event_url': event_url})}"
+    query: dict[str, str] = {}
+    if event_url:
+        query["event_url"] = event_url
+    if event_date:
+        query["event_date"] = event_date
+    return f"{MINOR_AUTHORIZATION_FORM_BASE_URL}?{urlencode(query)}"
 
 
-def personalize_minor_authorization_links(structured_content: dict, event_url: str | None) -> dict | None:
-    personalized_url = build_minor_authorization_form_url(event_url)
+def personalize_minor_authorization_links(
+    structured_content: dict,
+    event_url: str | None,
+    event_date: str | None = None,
+) -> dict | None:
+    personalized_url = build_minor_authorization_form_url(event_url, event_date)
     modules = structured_content.get("modules")
     if not isinstance(modules, list):
         return None
@@ -433,7 +442,6 @@ class EventInstantiation(BaseModel):
         body_parts.append(
             f'<h2><a href="{form_url}" style="text-decoration: none;">NNA Primero, Siempre</a></h2>'
         )
-        body_parts.append("<br><br>")
         body_parts.append(
             "<p><em>NNA significa niñas, niños y adolescentes. Si la inscripción es para una persona menor de edad, te pedimos leer este punto con atención. Estas medidas buscan su bienestar, su protección integral y una participación segura, con el acompañamiento de su familia o representante legal.</em></p>"
         )
@@ -453,9 +461,7 @@ class EventInstantiation(BaseModel):
             "no tomamos fotos de menores de edad y procuramos entornos seguros con acompañamiento responsable. "
             f'Si necesitas orientación, puedes escribirnos a <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>.</em></p>'
         )
-        body_parts.append(
-            f'<p><b>Contacto:</b> <a href="{CONTACT_URL}">circleup.com.co</a> | <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a></p>'
-        )
+
         body_parts.append("<h2>FAQs</h2>")
         body_parts.append("".join(faq_html))
 

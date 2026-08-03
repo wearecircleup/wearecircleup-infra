@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import AsyncIterator
 
 import httpx
@@ -38,6 +39,23 @@ def next_structured_content_version(structured_content: dict) -> int:
     if match and match.isdigit():
         return int(match) + 1
     return 2
+
+
+def event_date_for_form(event: dict) -> str | None:
+    start = event.get("start")
+    if not isinstance(start, dict):
+        return None
+    for key in ("local", "utc"):
+        value = start.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        normalized = value.strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            continue
+        return parsed.strftime("%m/%d/%Y")
+    return None
 
 
 @asynccontextmanager
@@ -134,9 +152,10 @@ async def publish_event_instantiation(event_id: str, client: EventbriteClient = 
     await client.publish_event(event_id)
     published_event = await client.get_event(event_id, {"expand": "venue,ticket_classes,ticket_availability"})
     event_url = published_event.get("url")
+    event_date = event_date_for_form(published_event)
     if isinstance(event_url, str) and event_url.strip():
         structured_content = await client.get_structured_content(event_id)
-        updated_content = personalize_minor_authorization_links(structured_content, event_url.strip())
+        updated_content = personalize_minor_authorization_links(structured_content, event_url.strip(), event_date)
         if updated_content is not None:
             await client.create_structured_content(
                 event_id,
