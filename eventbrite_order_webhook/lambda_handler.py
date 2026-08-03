@@ -165,7 +165,16 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
             "changed": order.get("changed"),
         },
     )
+    _log_json("Eventbrite raw order payload", order)
     attendees = _fetch_all_order_attendees(order_id, token)
+    _log_json(
+        "Eventbrite raw order attendees payload",
+        {
+            "order_id": order_id,
+            "attendee_count": len(attendees),
+            "attendees": attendees,
+        },
+    )
     received_at = (
         (request_context or {}).get("time")
         or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
