@@ -115,7 +115,7 @@ def test_instantiation_validates_the_fixed_contract() -> None:
 def test_manager_runs_event_ticket_questions_content_then_validation() -> None:
     client = FakeEventbriteClient()
     result = asyncio.run(manager(client).create_and_validate(EventInstantiation(**valid_payload())))
-    assert client.calls == ["event", "ticket", "question", "question", "question", "question", "question", "question", "question", "content", "content_readback", "validate"]
+    assert client.calls == ["event", "ticket", "question", "question", "question", "question", "question", "question", "content", "content_readback", "validate"]
     assert result["validated"] is True
     assert result["ticket"]["quantity_total"] == 3
     assert "summary" not in client.created_event
@@ -127,19 +127,19 @@ def test_manager_runs_event_ticket_questions_content_then_validation() -> None:
     assert result["questions"][1]["type"] == "dropdown"
     assert result["questions"][2]["respondent"] == "attendee"
     assert result["questions"][2]["type"] == "dropdown"
-    assert "¿Quieres recibir actualizaciones por SMS?" in result["questions"][3]["question"]["html"]
     assert result["questions"][3]["respondent"] == "attendee"
-    assert result["questions"][3]["type"] == "text"
-    assert result["questions"][3]["required"] is False
-    assert "menor de edad" in result["questions"][4]["question"]["html"]
+    assert "NNA Primero, Siempre" in result["questions"][3]["question"]["html"]
+    assert result["questions"][3]["type"] == "checkbox"
+    assert result["questions"][3]["choices"][0]["answer"]["html"] == "Entiendo"
+    assert "<em>" in result["questions"][3]["question"]["html"]
+    assert "tratamiento de mis datos" in result["questions"][4]["question"]["html"]
     assert result["questions"][4]["respondent"] == "attendee"
-    assert result["questions"][4]["choices"][0]["answer"]["html"] == "Entiendo"
-    assert "tratamiento de mis datos" in result["questions"][5]["question"]["html"]
+    assert result["questions"][4]["choices"][0]["answer"]["html"] == "Acepto"
+    assert "<em>" in result["questions"][4]["question"]["html"]
+    assert "consumo mínimo" in result["questions"][5]["question"]["html"]
     assert result["questions"][5]["respondent"] == "attendee"
-    assert result["questions"][5]["choices"][0]["answer"]["html"] == "Acepto"
-    assert "consumo mínimo" in result["questions"][6]["question"]["html"]
-    assert result["questions"][6]["respondent"] == "attendee"
-    assert result["questions"][6]["choices"][0]["answer"]["html"] == "Entiendo"
+    assert result["questions"][5]["choices"][0]["answer"]["html"] == "Entiendo"
+    assert "<em>" in result["questions"][5]["question"]["html"]
     assert client.structured_content["version"] == 1
     assert client.structured_content["content"]["purpose"] == "listing"
     assert client.structured_content["content"]["publish"] is True
@@ -155,6 +155,16 @@ def test_manager_runs_event_ticket_questions_content_then_validation() -> None:
         in body
     )
     assert "Consumo minimo sugerido por el lugar." not in body
+    assert '<h2><a href="https://app.youform.com/forms/iamr7tnj" style="text-decoration: none;">NNA Primero, Siempre</a></h2>' in body
+    assert 'href="https://app.youform.com/forms/iamr7tnj"' in body
+    assert "NNA significa niñas, niños y adolescentes." in body
+    assert "Si la inscripción es para una persona menor de edad, te pedimos leer este punto con atención." in body
+    assert "debe ser diligenciado por su madre, padre o representante legal" in body
+    assert "Debe completarse antes de inscribirse en Eventbrite" in body
+    assert "podremos anular la inscripción y no será posible realizar el check-in" in body
+    assert "Para menores de 14 años, el proceso requiere acompañamiento presencial del representante legal" in body
+    assert "no tomamos fotos de menores de edad" in body
+    assert "procuramos entornos seguros con acompañamiento responsable" in body
     assert '<b>Contacto:</b> <a href="https://www.circleup.com.co/">circleup.com.co</a>' in body
     assert "Sobre este encuentro" not in body
     assert "Llegada" not in body

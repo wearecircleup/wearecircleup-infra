@@ -166,6 +166,7 @@ DEFAULT_FAQS = (
 )
 CONTACT_URL = "https://www.circleup.com.co/"
 CONTACT_EMAIL = "hola@circleup.com.co"
+MINOR_AUTHORIZATION_FORM_URL = "https://app.youform.com/forms/iamr7tnj"
 TIMEZONE_FALLBACKS = {
     "America/Bogota": timezone(timedelta(hours=-5)),
 }
@@ -180,7 +181,6 @@ EDUCATION_LEVEL_CHOICES = [
     "Doctorado",
     "Otro",
 ]
-PHONE_QUESTION = "¿Quieres recibir actualizaciones por SMS? Déjanos tu número. Lo usaremos solo para este evento."
 AGE_RANGE_QUESTION = "¿Cuál es tu rango de edad?"
 AGE_RANGE_CHOICES = [
     "14 a 17 años",
@@ -191,8 +191,9 @@ AGE_RANGE_CHOICES = [
     "55 años o más",
 ]
 MINOR_AUTHORIZATION_QUESTION = (
-    "Si eres menor de edad, te enviaremos una autorización para tu acudiente. "
-    "Debe estar firmada digitalmente para tu check-in."
+    f'<em>Confirmo que leí la sección <a href="{MINOR_AUTHORIZATION_FORM_URL}">NNA Primero, Siempre</a> '
+    "y entiendo que, si la persona inscrita tiene entre 14 y 17 años, el formulario obligatorio "
+    "ya fue completado por su madre, padre o representante legal para poder participar.</em>"
 )
 MULTIPLE_CHOICE_TYPES = {"radio", "dropdown", "checkbox"}
 
@@ -329,16 +330,6 @@ class EventInstantiation(BaseModel):
                 "ticket_classes": [],
             },
             {
-                "question": {
-                    "html": PHONE_QUESTION,
-                },
-                "respondent": "attendee",
-                "type": "text",
-                "required": False,
-                "choices": [],
-                "ticket_classes": [],
-            },
-            {
                 "question": {"html": MINOR_AUTHORIZATION_QUESTION},
                 "respondent": "attendee",
                 "type": "checkbox",
@@ -348,7 +339,7 @@ class EventInstantiation(BaseModel):
             },
             {
                 "question": {
-                    "html": "¿Aceptas la información del evento y las reglas de convivencia del lugar?<br><br><em>Acepto el tratamiento de mis datos, según la Ley 1581 de 2012, solo para mi inscripción y mensajes de este evento. No se comparten con terceros.</em>",
+                    "html": "<em>¿Aceptas la información del evento y las reglas de convivencia del lugar?<br><br>Acepto el tratamiento de mis datos, según la Ley 1581 de 2012, solo para mi inscripción y mensajes de este evento. No se comparten con terceros.</em>",
                 },
                 "respondent": "attendee",
                 "type": "checkbox",
@@ -362,7 +353,7 @@ class EventInstantiation(BaseModel):
             questions.append(
                 {
                     "question": {
-                        "html": f"Entiendo que el lugar anfitrión solicita un consumo mínimo de {amount} COP para consumo propio, cobrado por el lugar y no por Circle Up Community?",
+                        "html": f"<em>Entiendo que el lugar anfitrión solicita un consumo mínimo de {amount} COP para consumo propio, cobrado por el lugar y no por Circle Up Community?</em>",
                     },
                     "respondent": "attendee",
                     "type": "checkbox",
@@ -390,6 +381,24 @@ class EventInstantiation(BaseModel):
             body_parts.append("<br><br>")
         body_parts.append("<h2>FAQs</h2>")
         body_parts.append("".join(faq_html))
+        body_parts.append(
+            f'<h2><a href="{MINOR_AUTHORIZATION_FORM_URL}" style="text-decoration: none;">NNA Primero, Siempre</a></h2>'
+        )
+        body_parts.append(
+            "<p><em>NNA significa niñas, niños y adolescentes. Si la inscripción es para una persona menor de edad, te pedimos leer este punto con atención. Estas medidas buscan su bienestar, su protección integral y una participación segura, con el acompañamiento de su familia o representante legal.</em></p>"
+        )
+        body_parts.append(
+            "<h3>¿Quién debe completar el formulario?</h3>"
+            f'<p><em>Si la persona inscrita tiene entre 14 y 17 años, el <a href="{MINOR_AUTHORIZATION_FORM_URL}">formulario para menores de edad</a> debe ser diligenciado por su madre, padre o representante legal.</em></p>'
+        )
+        body_parts.append(
+            "<h3>¿Cuándo debe quedar listo?</h3>"
+            "<p><em>Debe completarse antes de inscribirse en Eventbrite. La inscripción solo podrá mantenerse si encontramos la autorización previa. Si el formulario no está completo o aprobado, podremos anular la inscripción y no será posible realizar el check-in.</em></p>"
+        )
+        body_parts.append(
+            "<h3>¿Qué debemos tener en cuenta según la edad?</h3>"
+            f'<p><em>Entre los 14 y 17 años, la participación requiere la autorización previa de su representante legal. Para menores de 14 años, el proceso requiere acompañamiento presencial del representante legal durante la actividad. Además, promovemos medidas de cuidado acordes con la protección integral de niñas, niños y adolescentes: no pedimos datos innecesarios, no tomamos fotos de menores de edad y procuramos entornos seguros con acompañamiento responsable. Si necesitas orientación, puedes escribirnos a <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>.</em></p>"
+        )
         body_parts.append(
             f'<p><b>Contacto:</b> <a href="{CONTACT_URL}">circleup.com.co</a> | <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a></p>'
         )

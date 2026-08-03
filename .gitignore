@@ -20,5 +20,7 @@ __pycache__/
 .env.local
 .env.*.local
 eventbrite_api/.env
+eventbrite_api/.env.local
+eventbrite_api/.preview/
 
 infra/artifacts/
