@@ -51,7 +51,14 @@ def _signature_storage_location(parsed_body: dict[str, Any], signature_url: str)
 
 
 def _download_signature(signature_url: str) -> tuple[bytes, str | None]:
-    request = Request(signature_url, headers={"Accept": "*/*"}, method="GET")
+    request = Request(
+        signature_url,
+        headers={
+            "Accept": "*/*",
+            "User-Agent": "Mozilla/5.0",
+        },
+        method="GET",
+    )
     with urlopen(request, timeout=20) as response:
         content = response.read()
         content_type = response.headers.get_content_type() if response.headers else None
@@ -85,7 +92,13 @@ def _normalize_answers(parsed_body: dict[str, Any]) -> list[dict[str, Any]]:
     for question, answer in answers.items():
         normalized_answer = answer
         if str(question) == SIGNATURE_QUESTION and isinstance(answer, str) and answer.strip():
-            normalized_answer = _store_signature(parsed_body, answer.strip())
+            try:
+                normalized_answer = _store_signature(parsed_body, answer.strip())
+            except Exception:
+                logger.exception(
+                    "Failed to copy YouForm signature for submission %s. Keeping original URL.",
+                    parsed_body.get("submission_id"),
+                )
         normalized.append({"question": str(question), "answer": normalized_answer})
     return normalized
 

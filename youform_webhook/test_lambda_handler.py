@@ -1,4 +1,5 @@
 import lambda_handler as mod
+from urllib.error import HTTPError
 
 
 def test_store_submission_copies_signature_to_s3_and_persists_s3_reference(monkeypatch):
@@ -86,3 +87,49 @@ def test_store_submission_skips_without_submission_id(monkeypatch):
     stored = mod._store_submission({"answers": {"Nombre Completo": "Juan"}})
 
     assert stored is False
+
+
+def test_store_submission_keeps_original_signature_url_when_copy_fails(monkeypatch):
+    saved: dict[str, object] = {}
+
+    class FakeTable:
+        def put_item(self, Item):
+            saved["Item"] = Item
+
+    parsed_body = {
+        "submission_id": "2jgxyorbkf",
+        "form_id": "iamr7tnj",
+        "form_name": "Adult Authorization for Minor",
+        "event_id": "5155b508-96d8-4b3a-b2eb-ec3fdc38ca5c",
+        "event_type": "submission",
+        "started_at": "2026-08-03T14:30:02.000000Z",
+        "completed_at": "2026-08-03T15:32:33.000000Z",
+        "answers": {
+            "Firma para autorizar": "https://files.youform.com/signature-9ad1e753-b04a-47bb-b222-a02febabb170.png",
+        },
+    }
+
+    monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
+    monkeypatch.setenv("SIGNATURES_BUCKET_NAME", "test-signatures")
+    monkeypatch.setattr(mod, "_dynamodb_table", lambda table_name: FakeTable())
+
+    def fail_download(_: str):
+        raise HTTPError(
+            "https://files.youform.com/signature-9ad1e753-b04a-47bb-b222-a02febabb170.png",
+            403,
+            "Forbidden",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr(mod, "_download_signature", fail_download)
+
+    stored = mod._store_submission(parsed_body)
+
+    assert stored is True
+    assert saved["Item"]["answers"] == [
+        {
+            "question": "Firma para autorizar",
+            "answer": "https://files.youform.com/signature-9ad1e753-b04a-47bb-b222-a02febabb170.png",
+        }
+    ]
