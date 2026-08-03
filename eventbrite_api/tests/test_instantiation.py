@@ -125,6 +125,7 @@ def test_manager_runs_event_ticket_questions_content_then_validation() -> None:
     assert result["questions"][1]["type"] == "dropdown"
     assert result["questions"][2]["type"] == "dropdown"
     assert "NNA Primero, Siempre" in result["questions"][3]["question"]["html"]
+    assert 'href="' not in result["questions"][3]["question"]["html"]
     assert result["questions"][3]["type"] == "checkbox"
     assert result["questions"][3]["choices"][0]["answer"]["html"] == "Entiendo"
     assert "<em>" in result["questions"][3]["question"]["html"]
@@ -147,7 +148,7 @@ def test_manager_runs_event_ticket_questions_content_then_validation() -> None:
     assert "Aprendizaje comunitario en una hora." in body
     assert "<aside>Ana Torres es investigadora comunitaria y guiara una conversacion practica sobre el tema y sus aplicaciones cotidianas.</aside>" in body
     assert "<strong>" not in body
-    assert "<h3>¿Qué es Circle Up Community?</h3><p><em>Un proyecto de investigación que conecta tecnología, comunidad y academia mediante aprendizaje comunitario.</em></p>" in body
+    assert "<h3>¿Qué es Circle Up Community?</h3><p><em>Un proyecto de investigación, aún en fase de validación, que conecta tecnología, comunidad y academia mediante aprendizaje comunitario. No es una fundación ni una organización sin ánimo de lucro, y por ahora no cuenta con representación legal constituida.</em></p>" in body
     assert (
         "<h3>¿Tiene algún costo?</h3><p><em>Participar es gratuito y Circle Up no recibe dinero por este encuentro. "
         "Algunos espacios pueden tener un consumo mínimo como parte de su acuerdo con el lugar. Si aplica, encontrarás "
@@ -180,7 +181,8 @@ def test_structured_content_omits_a_repeated_title_in_overview() -> None:
     body = EventInstantiation(**payload).structured_content_payload()["modules"][0]["data"]["body"]["text"]
 
     assert body.startswith("<p>Este es un proyecto super interesante de matematicas avanzadas.</p><aside>Ana Torres es investigadora comunitaria")
-    assert "</aside><br><br><h2>FAQs</h2>" in body
+    assert "</aside><br><br><h2><a href=\"https://app.youform.com/forms/iamr7tnj\" style=\"text-decoration: none;\">NNA Primero, Siempre</a></h2>" in body
+    assert body.index("<h2>FAQs</h2>") > body.index("hola@circleup.com.co")
     assert "Software NASA" not in body
 
 

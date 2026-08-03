@@ -1,6 +1,7 @@
 ﻿from datetime import datetime, timedelta, timezone
 from typing import Literal
 import re
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, model_validator
@@ -149,11 +150,11 @@ class ImageUploadCompletion(BaseModel):
 DEFAULT_FAQS = (
     (
         "¿Qué es Circle Up Community?",
-        "Un proyecto de investigación que conecta tecnología, comunidad y academia mediante aprendizaje comunitario.",
+        "Un proyecto de investigación, aún en fase de validación, que conecta tecnología, comunidad y academia mediante aprendizaje comunitario. No es una fundación ni una organización sin ánimo de lucro, y por ahora no cuenta con representación legal constituida.",
     ),
     (
-        "¿Cómo es el encuentro?",
-        "Dura hasta una hora, reúne de 3 a 10 personas y se adapta a cualquier espacio. ¿Conoces uno? Cuéntanos y lo gestionamos.",
+        "¿Cómo es el evento?",
+        "Dura 1 hora, se realiza en un lugar público como una panadería, cafetería o biblioteca, y es dirigido por un voluntario de la comunidad experto en el tema. Reúne de 3 a 10 personas y se adapta a cualquier espacio.",
     ),
     (
         "¿Tiene algún costo?",
@@ -166,7 +167,7 @@ DEFAULT_FAQS = (
 )
 CONTACT_URL = "https://www.circleup.com.co/"
 CONTACT_EMAIL = "hola@circleup.com.co"
-MINOR_AUTHORIZATION_FORM_URL = "https://app.youform.com/forms/iamr7tnj"
+MINOR_AUTHORIZATION_FORM_BASE_URL = "https://app.youform.com/forms/iamr7tnj"
 TIMEZONE_FALLBACKS = {
     "America/Bogota": timezone(timedelta(hours=-5)),
 }
@@ -191,11 +192,66 @@ AGE_RANGE_CHOICES = [
     "55 años o más",
 ]
 MINOR_AUTHORIZATION_QUESTION = (
-    f'<em>Confirmo que leí la sección <a href="{MINOR_AUTHORIZATION_FORM_URL}">NNA Primero, Siempre</a> '
-    "y entiendo que, si la persona inscrita tiene entre 14 y 17 años, el formulario obligatorio "
-    "ya fue completado por su madre, padre o representante legal para poder participar.</em>"
+    "<em>Confirmo que leí la sección NNA Primero, Siempre "
+    "y entiendo que, si tengo entre 14 y 17 años, el formulario es obligatorio, debe ser diligenciado por mi representante legal "
+    "y debe completarse antes de registrar esta orden. De lo contrario, la inscripción queda sujeta a cancelación.</em>"
 )
 MULTIPLE_CHOICE_TYPES = {"radio", "dropdown", "checkbox"}
+
+
+def build_minor_authorization_form_url(event_url: str | None = None) -> str:
+    if not event_url:
+        return MINOR_AUTHORIZATION_FORM_BASE_URL
+    return f"{MINOR_AUTHORIZATION_FORM_BASE_URL}?{urlencode({'event_url': event_url})}"
+
+
+def personalize_minor_authorization_links(structured_content: dict, event_url: str | None) -> dict | None:
+    personalized_url = build_minor_authorization_form_url(event_url)
+    modules = structured_content.get("modules")
+    if not isinstance(modules, list):
+        return None
+    changed = False
+    updated_modules: list[dict] = []
+    for module in modules:
+        if not isinstance(module, dict):
+            updated_modules.append(module)
+            continue
+        updated_module = dict(module)
+        data = updated_module.get("data")
+        if not isinstance(data, dict):
+            updated_modules.append(updated_module)
+            continue
+        updated_data = dict(data)
+        body = updated_data.get("body")
+        if not isinstance(body, dict):
+            updated_module["data"] = updated_data
+            updated_modules.append(updated_module)
+            continue
+        updated_body = dict(body)
+        text = updated_body.get("text")
+        if not isinstance(text, str):
+            updated_data["body"] = updated_body
+            updated_module["data"] = updated_data
+            updated_modules.append(updated_module)
+            continue
+        updated_text = re.sub(
+            rf"{re.escape(MINOR_AUTHORIZATION_FORM_BASE_URL)}(?:\?[^\"'>\s]*)?",
+            personalized_url,
+            text,
+        )
+        if updated_text != text:
+            changed = True
+        updated_body["text"] = updated_text
+        updated_data["body"] = updated_body
+        updated_module["data"] = updated_data
+        updated_modules.append(updated_module)
+    if not changed:
+        return None
+    return {
+        "purpose": structured_content.get("purpose", "listing"),
+        "publish": True,
+        "modules": updated_modules,
+    }
 
 
 class PresenterQuestion(BaseModel):
@@ -335,7 +391,7 @@ class EventInstantiation(BaseModel):
             },
             {
                 "question": {
-                    "html": "<em>¿Aceptas la información del evento y las reglas de convivencia del lugar?<br><br>Acepto el tratamiento de mis datos, según la Ley 1581 de 2012, solo para mi inscripción y mensajes de este evento. No se comparten con terceros.</em>",
+                    "html": "<em>Acepto el tratamiento de mis datos, según la Ley 1581 de 2012, solo para mi inscripción y mensajes de este evento. No se comparten con terceros.</em>",
                 },
                 "type": "checkbox",
                 "required": True,
@@ -348,17 +404,18 @@ class EventInstantiation(BaseModel):
             questions.append(
                 {
                     "question": {
-                        "html": f"<em>Entiendo que el lugar anfitrión solicita un consumo mínimo de {amount} COP para consumo propio, cobrado por el lugar y no por Circle Up Community?</em>",
+                        "html": f"<em>Acepto que el lugar anfitrión solicite un consumo mínimo de {amount} COP para consumo propio, cobrado por el lugar y no por Circle Up Community.</em>",
                     },
                     "type": "checkbox",
                     "required": True,
-                    "choices": [{"answer": {"html": "Entiendo"}}],
+                    "choices": [{"answer": {"html": "Acepto"}}],
                     "ticket_classes": [],
                 }
             )
         return questions
 
     def structured_content_payload(self) -> dict:
+        form_url = build_minor_authorization_form_url()
         overview_blocks = [block.strip() for block in re.split(r"\n\s*\n", self.overview) if block.strip()]
         if overview_blocks and overview_blocks[0].casefold() == self.name.casefold():
             overview_blocks = overview_blocks[1:]
@@ -373,17 +430,16 @@ class EventInstantiation(BaseModel):
         if overview_html:
             body_parts.append(overview_html)
             body_parts.append("<br><br>")
-        body_parts.append("<h2>FAQs</h2>")
-        body_parts.append("".join(faq_html))
         body_parts.append(
-            f'<h2><a href="{MINOR_AUTHORIZATION_FORM_URL}" style="text-decoration: none;">NNA Primero, Siempre</a></h2>'
+            f'<h2><a href="{form_url}" style="text-decoration: none;">NNA Primero, Siempre</a></h2>'
         )
+        body_parts.append("<br><br>")
         body_parts.append(
             "<p><em>NNA significa niñas, niños y adolescentes. Si la inscripción es para una persona menor de edad, te pedimos leer este punto con atención. Estas medidas buscan su bienestar, su protección integral y una participación segura, con el acompañamiento de su familia o representante legal.</em></p>"
         )
         body_parts.append(
             "<h3>¿Quién debe completar el formulario?</h3>"
-            f'<p><em>Si la persona inscrita tiene entre 14 y 17 años, el <a href="{MINOR_AUTHORIZATION_FORM_URL}">formulario para menores de edad</a> debe ser diligenciado por su madre, padre o representante legal.</em></p>'
+            f'<p><em>Si la persona inscrita tiene entre 14 y 17 años, el <a href="{form_url}">formulario para menores de edad</a> debe ser diligenciado por el representante legal.</em></p>'
         )
         body_parts.append(
             "<h3>¿Cuándo debe quedar listo?</h3>"
@@ -400,6 +456,12 @@ class EventInstantiation(BaseModel):
         body_parts.append(
             f'<p><b>Contacto:</b> <a href="{CONTACT_URL}">circleup.com.co</a> | <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a></p>'
         )
+        body_parts.append("<h2>FAQs</h2>")
+        body_parts.append("".join(faq_html))
+
+        body_parts.append(
+                    f'<p><b>Contacto:</b> <a href="{CONTACT_URL}">circleup.com.co</a> | <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a></p>'
+                )
         return {
             "version_number": 1,
             "purpose": "listing",

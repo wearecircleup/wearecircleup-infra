@@ -16,6 +16,22 @@ class FakeClient:
     def __init__(self):
         self.calls = []
         self.fail_ticket = False
+        self.structured_content = {
+            "resource_uris": {"self": "https://www.eventbriteapi.com/v3/events/event-1/structured_content/1/"},
+            "purpose": "listing",
+            "modules": [
+                {
+                    "type": "text",
+                    "data": {
+                        "body": {
+                            "type": "text",
+                            "alignment": "left",
+                            "text": '<h2><a href="https://app.youform.com/forms/iamr7tnj">NNA Primero, Siempre</a></h2>',
+                        }
+                    },
+                }
+            ],
+        }
 
     async def list_events(self, params):
         self.calls.append(("list_events", params))
@@ -41,7 +57,11 @@ class FakeClient:
 
     async def get_event(self, event_id, params=None):
         self.calls.append(("get_event", event_id, params))
-        return {"id": event_id, "status": "live"}
+        return {
+            "id": event_id,
+            "status": "live",
+            "url": "https://www.eventbrite.co/e/summer-triangle-corner-tickets-1996424879557",
+        }
 
     async def delete_event(self, event_id):
         self.calls.append(("delete_event", event_id))
@@ -65,6 +85,18 @@ class FakeClient:
             "upload_data": {"key": "signed-key"},
             "upload_token": "signed-token",
         }
+
+    async def get_structured_content(self, event_id):
+        self.calls.append(("get_structured_content", event_id))
+        return self.structured_content
+
+    async def create_structured_content(self, event_id, version, content):
+        self.calls.append(("create_structured_content", event_id, version, content))
+        self.structured_content = {
+            "resource_uris": {"self": f"https://www.eventbriteapi.com/v3/events/{event_id}/structured_content/{version}/"},
+            **content,
+        }
+        return self.structured_content
 
 
 @pytest.fixture
@@ -91,6 +123,25 @@ def test_event_creation_orchestrates_event_ticket_publish_and_read(client_and_fa
     assert response.status_code == 201
     assert response.json()["published"] is True
     assert [call[0] for call in fake.calls] == ["create_event", "create_ticket", "publish", "get_event"]
+
+
+def test_publish_event_instantiation_personalizes_minor_authorization_link(client_and_fake) -> None:
+    client, fake = client_and_fake
+    response = client.post("/event-instantiations/event-1/publish", json={})
+
+    assert response.status_code == 200
+    assert [call[0] for call in fake.calls] == [
+        "publish",
+        "get_event",
+        "get_structured_content",
+        "create_structured_content",
+        "get_event",
+    ]
+    _, event_id, version, content = fake.calls[3]
+    assert event_id == "event-1"
+    assert version == 2
+    text = content["modules"][0]["data"]["body"]["text"]
+    assert "event_url=https%3A%2F%2Fwww.eventbrite.co%2Fe%2Fsummer-triangle-corner-tickets-1996424879557" in text
 
 
 def test_event_creation_cleans_up_draft_when_ticket_creation_fails(client_and_fake) -> None:

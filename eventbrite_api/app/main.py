@@ -12,10 +12,32 @@ from app.client import EventbriteAPIError, EventbriteClient
 from app.config import Settings, get_settings
 from app.exports import attendee_export
 from app.instantiation import EventInstantiationManager
-from app.schemas import ImageUploadCompletion, EventCreate, EventInstantiation, EventUpdate, VenueCreate, VenueUpdate
+from app.schemas import (
+    EventCreate,
+    EventInstantiation,
+    EventUpdate,
+    ImageUploadCompletion,
+    VenueCreate,
+    VenueUpdate,
+    personalize_minor_authorization_links,
+)
 
 
 logger = logging.getLogger(__name__)
+
+
+def next_structured_content_version(structured_content: dict) -> int:
+    for key in ("page_version_number", "version_number"):
+        value = structured_content.get(key)
+        if isinstance(value, int):
+            return value + 1
+        if isinstance(value, str) and value.isdigit():
+            return int(value) + 1
+    resource_uri = ((structured_content.get("resource_uris") or {}).get("self") or "").rstrip("/")
+    match = resource_uri and resource_uri.split("/")[-1]
+    if match and match.isdigit():
+        return int(match) + 1
+    return 2
 
 
 @asynccontextmanager
@@ -110,7 +132,19 @@ async def create_event_instantiation(
 @app.post("/event-instantiations/{event_id}/publish", tags=["instantiation"])
 async def publish_event_instantiation(event_id: str, client: EventbriteClient = Depends(get_client)) -> dict:
     await client.publish_event(event_id)
-    return await client.get_event(event_id, {"expand": "venue,ticket_classes,ticket_availability"})
+    published_event = await client.get_event(event_id, {"expand": "venue,ticket_classes,ticket_availability"})
+    event_url = published_event.get("url")
+    if isinstance(event_url, str) and event_url.strip():
+        structured_content = await client.get_structured_content(event_id)
+        updated_content = personalize_minor_authorization_links(structured_content, event_url.strip())
+        if updated_content is not None:
+            await client.create_structured_content(
+                event_id,
+                next_structured_content_version(structured_content),
+                updated_content,
+            )
+            published_event = await client.get_event(event_id, {"expand": "venue,ticket_classes,ticket_availability"})
+    return published_event
 
 
 @app.get("/events/{event_id}/image/upload-request", tags=["images"])
