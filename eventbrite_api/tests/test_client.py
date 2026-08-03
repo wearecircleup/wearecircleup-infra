@@ -42,6 +42,7 @@ def test_create_event_uses_the_documented_organization_endpoint_and_wrapper() ->
     ("call", "method", "path"),
     [
         (lambda client: client.get_event("event-1"), "GET", "/v3/events/event-1/"),
+        (lambda client: client.update_ticket_buyer_settings("event-1", {"collect_questions_after_payment": False}), "POST", "/v3/events/event-1/ticket_buyer_settings/"),
         (lambda client: client.update_event("event-1", {"summary": "x"}), "POST", "/v3/events/event-1/"),
         (lambda client: client.create_ticket("event-1", {"name": "General"}), "POST", "/v3/events/event-1/ticket_classes/"),
         (lambda client: client.create_question("event-1", {"type": "text"}), "POST", "/v3/events/event-1/questions/"),

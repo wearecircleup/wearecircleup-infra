@@ -344,6 +344,10 @@ async def create_event(
     created_event = await client.create_event(payload.eventbrite_payload(settings.default_currency))
     event_id = created_event["id"]
     try:
+        await client.update_ticket_buyer_settings(
+            event_id,
+            {"collect_questions_after_payment": False},
+        )
         ticket = await client.create_free_ticket(event_id, payload.ticket_name, payload.ticket_quantity)
     except Exception:
         # An event without its required ticket must not be left behind as a

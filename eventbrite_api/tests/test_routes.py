@@ -45,6 +45,10 @@ class FakeClient:
         self.calls.append(("create_event", event))
         return {"id": "event-1", **event}
 
+    async def update_ticket_buyer_settings(self, event_id, ticket_buyer_settings):
+        self.calls.append(("update_ticket_buyer_settings", event_id, ticket_buyer_settings))
+        return {"event_id": event_id, **ticket_buyer_settings}
+
     async def create_free_ticket(self, event_id, name, quantity):
         self.calls.append(("create_ticket", event_id, name, quantity))
         if self.fail_ticket:
@@ -123,7 +127,18 @@ def test_event_creation_orchestrates_event_ticket_publish_and_read(client_and_fa
     response = client.post("/events", json=event_body())
     assert response.status_code == 201
     assert response.json()["published"] is True
-    assert [call[0] for call in fake.calls] == ["create_event", "create_ticket", "publish", "get_event"]
+    assert [call[0] for call in fake.calls] == [
+        "create_event",
+        "update_ticket_buyer_settings",
+        "create_ticket",
+        "publish",
+        "get_event",
+    ]
+    assert fake.calls[1] == (
+        "update_ticket_buyer_settings",
+        "event-1",
+        {"collect_questions_after_payment": False},
+    )
 
 
 def test_publish_event_instantiation_personalizes_minor_authorization_link(client_and_fake) -> None:
@@ -151,7 +166,12 @@ def test_event_creation_cleans_up_draft_when_ticket_creation_fails(client_and_fa
     fake.fail_ticket = True
     with pytest.raises(RuntimeError, match="ticket rejected"):
         client.post("/events", json=event_body())
-    assert [call[0] for call in fake.calls] == ["create_event", "create_ticket", "delete_event"]
+    assert [call[0] for call in fake.calls] == [
+        "create_event",
+        "update_ticket_buyer_settings",
+        "create_ticket",
+        "delete_event",
+    ]
 
 
 def test_venue_update_is_a_patch_and_rejects_an_empty_body(client_and_fake) -> None:

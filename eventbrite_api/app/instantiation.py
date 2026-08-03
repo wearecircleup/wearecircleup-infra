@@ -20,6 +20,10 @@ class EventInstantiationManager:
         created = await self.client.create_event(event)
         event_id = str(created["id"])
         try:
+            await self.client.update_ticket_buyer_settings(
+                event_id,
+                {"collect_questions_after_payment": False},
+            )
             ticket = await self.client.create_ticket(event_id, draft.ticket_payload())
             ticket_id = str(ticket["id"])
             questions = []

@@ -49,6 +49,13 @@ class FakeEventbriteClient:
         self.created_event = event
         return {"id": "event-1", **event}
 
+    async def update_ticket_buyer_settings(self, event_id, ticket_buyer_settings):
+        self.calls.append("ticket_buyer_settings")
+        return {
+            "event_id": event_id,
+            **ticket_buyer_settings,
+        }
+
     async def create_ticket(self, event_id, ticket):
         self.calls.append("ticket")
         return {"id": "ticket-1", **ticket}
@@ -115,7 +122,7 @@ def test_instantiation_validates_the_fixed_contract() -> None:
 def test_manager_runs_event_ticket_questions_content_then_validation() -> None:
     client = FakeEventbriteClient()
     result = asyncio.run(manager(client).create_and_validate(EventInstantiation(**valid_payload())))
-    assert client.calls == ["event", "ticket", "question", "question", "question", "question", "question", "question", "content", "content_readback", "validate"]
+    assert client.calls == ["event", "ticket_buyer_settings", "ticket", "question", "question", "question", "question", "question", "question", "content", "content_readback", "validate"]
     assert result["validated"] is True
     assert result["ticket"]["quantity_total"] == 3
     assert "summary" not in client.created_event
@@ -190,13 +197,13 @@ def test_manager_deletes_partial_draft_on_failure() -> None:
     client = FakeEventbriteClient(fail_questions=True)
     with pytest.raises(RuntimeError, match="question failed"):
         asyncio.run(manager(client).create_and_validate(EventInstantiation(**valid_payload())))
-    assert client.calls == ["event", "ticket", "question", "delete"]
+    assert client.calls == ["event", "ticket_buyer_settings", "ticket", "question", "delete"]
 
 
 def test_manager_preserves_the_original_error_when_cleanup_fails() -> None:
     client = FakeEventbriteClient(fail_questions=True, fail_delete=True)
     with pytest.raises(RuntimeError, match="question failed"):
         asyncio.run(manager(client).create_and_validate(EventInstantiation(**valid_payload())))
-    assert client.calls == ["event", "ticket", "question", "delete"]
+    assert client.calls == ["event", "ticket_buyer_settings", "ticket", "question", "delete"]
 
 

@@ -48,6 +48,13 @@ class EventbriteClient:
     async def create_event(self, event: dict) -> dict:
         return await self.request("POST", f"/organizations/{self._organization_id}/events/", json={"event": event})
 
+    async def update_ticket_buyer_settings(self, event_id: str, ticket_buyer_settings: dict) -> dict:
+        return await self.request(
+            "POST",
+            f"/events/{event_id}/ticket_buyer_settings/",
+            json={"ticket_buyer_settings": ticket_buyer_settings},
+        )
+
     async def update_event(self, event_id: str, event: dict) -> dict:
         return await self.request("POST", f"/events/{event_id}/", json={"event": event})
 
