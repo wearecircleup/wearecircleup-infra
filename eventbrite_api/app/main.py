@@ -54,7 +54,7 @@ def event_date_for_form(event: dict) -> str | None:
             parsed = datetime.fromisoformat(normalized)
         except ValueError:
             continue
-        return parsed.strftime("%m/%d/%Y")
+        return parsed.strftime("%Y-%m-%d")
     return None
 
 

@@ -143,7 +143,7 @@ def test_publish_event_instantiation_personalizes_minor_authorization_link(clien
     assert version == 2
     text = content["modules"][0]["data"]["body"]["text"]
     assert "event_url=https%3A%2F%2Fwww.eventbrite.co%2Fe%2Fsummer-triangle-corner-tickets-1996424879557" in text
-    assert "event_date=08%2F07%2F2026" in text
+    assert "event_date=2026-08-07" in text
 
 
 def test_event_creation_cleans_up_draft_when_ticket_creation_fails(client_and_fake) -> None:

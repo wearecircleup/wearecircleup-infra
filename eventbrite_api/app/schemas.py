@@ -462,6 +462,7 @@ class EventInstantiation(BaseModel):
             f'Si necesitas orientación, puedes escribirnos a <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>.</em></p>'
         )
 
+        body_parts.append("<br><br>")
         body_parts.append("<h2>FAQs</h2>")
         body_parts.append("".join(faq_html))
 

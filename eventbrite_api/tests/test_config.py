@@ -83,8 +83,8 @@ def test_get_settings_rejects_invalid_runtime_mode(monkeypatch):
 def test_build_minor_authorization_form_url_includes_event_url_and_date():
     url = build_minor_authorization_form_url(
         "https://www.eventbrite.co/e/summer-triangle-corner-tickets-1996424879557",
-        "08/07/2026",
+        "2026-08-07",
     )
 
     assert "event_url=https%3A%2F%2Fwww.eventbrite.co%2Fe%2Fsummer-triangle-corner-tickets-1996424879557" in url
-    assert "event_date=08%2F07%2F2026" in url
+    assert "event_date=2026-08-07" in url
