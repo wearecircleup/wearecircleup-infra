@@ -137,7 +137,11 @@ def test_event_creation_orchestrates_event_ticket_publish_and_read(client_and_fa
     assert fake.calls[1] == (
         "update_ticket_buyer_settings",
         "event-1",
-        {"collect_questions_after_payment": False},
+        {
+            "collect_questions_after_payment": False,
+            "allow_attendee_update": False,
+            "survey_time_limit": 10,
+        },
     )
 
 

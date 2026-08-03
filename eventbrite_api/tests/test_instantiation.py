@@ -41,6 +41,7 @@ class FakeEventbriteClient:
         self.calls: list[str] = []
         self.structured_content: dict | None = None
         self.created_event: dict | None = None
+        self.ticket_buyer_settings: dict | None = None
         self.fail_questions = fail_questions
         self.fail_delete = fail_delete
 
@@ -51,6 +52,10 @@ class FakeEventbriteClient:
 
     async def update_ticket_buyer_settings(self, event_id, ticket_buyer_settings):
         self.calls.append("ticket_buyer_settings")
+        self.ticket_buyer_settings = {
+            "event_id": event_id,
+            **ticket_buyer_settings,
+        }
         return {
             "event_id": event_id,
             **ticket_buyer_settings,
@@ -123,6 +128,12 @@ def test_manager_runs_event_ticket_questions_content_then_validation() -> None:
     client = FakeEventbriteClient()
     result = asyncio.run(manager(client).create_and_validate(EventInstantiation(**valid_payload())))
     assert client.calls == ["event", "ticket_buyer_settings", "ticket", "question", "question", "question", "question", "question", "question", "content", "content_readback", "validate"]
+    assert client.ticket_buyer_settings == {
+        "event_id": "event-1",
+        "collect_questions_after_payment": False,
+        "allow_attendee_update": False,
+        "survey_time_limit": 10,
+    }
     assert result["validated"] is True
     assert result["ticket"]["quantity_total"] == 3
     assert "summary" not in client.created_event

@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from app.client import EventbriteAPIError, EventbriteClient
 from app.config import Settings, get_settings
 from app.exports import attendee_export
-from app.instantiation import EventInstantiationManager
+from app.instantiation import DEFAULT_TICKET_BUYER_SETTINGS, EventInstantiationManager
 from app.schemas import (
     EventCreate,
     EventInstantiation,
@@ -346,7 +346,7 @@ async def create_event(
     try:
         await client.update_ticket_buyer_settings(
             event_id,
-            {"collect_questions_after_payment": False},
+            DEFAULT_TICKET_BUYER_SETTINGS,
         )
         ticket = await client.create_free_ticket(event_id, payload.ticket_name, payload.ticket_quantity)
     except Exception:

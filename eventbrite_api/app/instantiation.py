@@ -7,6 +7,12 @@ from app.schemas import EventInstantiation
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TICKET_BUYER_SETTINGS = {
+    "collect_questions_after_payment": False,
+    "allow_attendee_update": False,
+    "survey_time_limit": 10,
+}
+
 
 class EventInstantiationManager:
     """Runs the fixed Circle Up draft sequence in the documented order."""
@@ -22,7 +28,7 @@ class EventInstantiationManager:
         try:
             await self.client.update_ticket_buyer_settings(
                 event_id,
-                {"collect_questions_after_payment": False},
+                DEFAULT_TICKET_BUYER_SETTINGS,
             )
             ticket = await self.client.create_ticket(event_id, draft.ticket_payload())
             ticket_id = str(ticket["id"])
