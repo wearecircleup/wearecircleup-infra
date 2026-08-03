@@ -82,7 +82,14 @@ async def attendee_count(client: EventbriteClient, event_id: str, status_filter:
 
 
 @app.exception_handler(EventbriteAPIError)
-async def eventbrite_error_handler(_: Request, exc: EventbriteAPIError) -> JSONResponse:
+async def eventbrite_error_handler(request: Request, exc: EventbriteAPIError) -> JSONResponse:
+    logger.exception(
+        "Eventbrite API error on %s %s: status=%s detail=%s",
+        request.method,
+        request.url.path,
+        exc.status_code,
+        exc.detail,
+    )
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 

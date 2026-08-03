@@ -219,7 +219,6 @@ class PresenterQuestion(BaseModel):
     def eventbrite_payload(self) -> dict:
         payload = {
             "question": {"html": self.prompt},
-            "respondent": "attendee",
             "type": self.type,
             "required": self.required,
             "choices": [],
@@ -315,7 +314,6 @@ class EventInstantiation(BaseModel):
         questions.extend([
             {
                 "question": {"html": EDUCATION_LEVEL_QUESTION},
-                "respondent": "attendee",
                 "type": "dropdown",
                 "required": True,
                 "choices": [{"answer": {"html": choice}} for choice in EDUCATION_LEVEL_CHOICES],
@@ -323,7 +321,6 @@ class EventInstantiation(BaseModel):
             },
             {
                 "question": {"html": AGE_RANGE_QUESTION},
-                "respondent": "attendee",
                 "type": "dropdown",
                 "required": True,
                 "choices": [{"answer": {"html": choice}} for choice in AGE_RANGE_CHOICES],
@@ -331,7 +328,6 @@ class EventInstantiation(BaseModel):
             },
             {
                 "question": {"html": MINOR_AUTHORIZATION_QUESTION},
-                "respondent": "attendee",
                 "type": "checkbox",
                 "required": True,
                 "choices": [{"answer": {"html": "Entiendo"}}],
@@ -341,7 +337,6 @@ class EventInstantiation(BaseModel):
                 "question": {
                     "html": "<em>¿Aceptas la información del evento y las reglas de convivencia del lugar?<br><br>Acepto el tratamiento de mis datos, según la Ley 1581 de 2012, solo para mi inscripción y mensajes de este evento. No se comparten con terceros.</em>",
                 },
-                "respondent": "attendee",
                 "type": "checkbox",
                 "required": True,
                 "choices": [{"answer": {"html": "Acepto"}}],
@@ -355,7 +350,6 @@ class EventInstantiation(BaseModel):
                     "question": {
                         "html": f"<em>Entiendo que el lugar anfitrión solicita un consumo mínimo de {amount} COP para consumo propio, cobrado por el lugar y no por Circle Up Community?</em>",
                     },
-                    "respondent": "attendee",
                     "type": "checkbox",
                     "required": True,
                     "choices": [{"answer": {"html": "Entiendo"}}],

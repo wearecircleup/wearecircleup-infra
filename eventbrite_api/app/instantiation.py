@@ -1,6 +1,11 @@
+import logging
+
 from app.client import EventbriteClient
 from app.config import Settings
 from app.schemas import EventInstantiation
+
+
+logger = logging.getLogger(__name__)
 
 
 class EventInstantiationManager:
@@ -23,7 +28,16 @@ class EventInstantiationManager:
                 # Eventbrite's Question contract expects ticket-class objects,
                 # not a list of bare IDs.
                 request["ticket_classes"] = [{"id": ticket_id}]
-                questions.append(await self.client.create_question(event_id, request))
+                try:
+                    created_question = await self.client.create_question(event_id, request)
+                except Exception:
+                    logger.exception(
+                        "Failed to create Eventbrite question for event %s with payload %s",
+                        event_id,
+                        request,
+                    )
+                    raise
+                questions.append(created_question)
             # The version belongs in the URL path. Eventbrite's documented body
             # contains only purpose, publish and the complete module list.
             content = draft.structured_content_payload()
