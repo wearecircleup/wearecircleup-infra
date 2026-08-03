@@ -58,6 +58,26 @@ output "eventbrite_order_webhook_submissions_table_name" {
   value       = module.eventbrite_order_submissions_dynamodb.table_name
 }
 
+output "minor_authorization_jobs_table_name" {
+  description = "DynamoDB table name storing minor authorization validation jobs."
+  value       = module.minor_authorization_jobs_dynamodb.table_name
+}
+
+output "minor_authorization_validator_lambda_function_name" {
+  description = "Lambda function name consuming minor authorization validation jobs."
+  value       = module.minor_authorization_validator.lambda_function_name
+}
+
+output "minor_authorization_validation_queue_name" {
+  description = "SQS queue name receiving minor authorization validation jobs."
+  value       = module.minor_authorization_validator.queue_name
+}
+
+output "minor_authorization_validation_queue_url" {
+  description = "SQS queue URL receiving minor authorization validation jobs."
+  value       = module.minor_authorization_validator.queue_url
+}
+
 output "youform_webhook_lambda_function_name" {
   description = "Lambda function name receiving YouForm submissions."
   value       = module.youform_webhook.lambda_function_name

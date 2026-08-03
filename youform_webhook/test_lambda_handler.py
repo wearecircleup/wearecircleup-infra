@@ -42,6 +42,9 @@ def test_store_submission_copies_signature_to_s3_and_persists_s3_reference(monke
         "completed_at": "2026-08-03T15:32:33.000000Z",
         "answers": {
             "Nombre Completo": "Juan Mesa",
+            "¿A qué evento asiste?": "https://www.eventbrite.co/e/architecture-tickets-1996461512126",
+            "¿Qué día es el evento?": "2026-08-05",
+            "¿Con qué correo vas a realizar la inscripción?": "GoCircleUp@gmail.com",
             "Firma para autorizar": "https://files.youform.com/signature-9ad1e753-b04a-47bb-b222-a02febabb170.png",
         },
     }
@@ -62,17 +65,39 @@ def test_store_submission_copies_signature_to_s3_and_persists_s3_reference(monke
         "ContentType": "image/png",
     }
     assert saved["Item"] == {
-        "pk": "SUBMISSION#2jgxyorbkf",
+        "pk": "EVENT#1996461512126#FORM#iamr7tnj",
         "sk": "SUBMISSION#2jgxyorbkf",
+        "gsi1pk": "EVENT#1996461512126",
+        "gsi1sk": "COMPLETED_AT#2026-08-03T15:32:33.000000Z#SUBMISSION#2jgxyorbkf",
+        "gsi2pk": "EMAIL#gocircleup@gmail.com",
+        "gsi2sk": "EVENT_DATE#2026-08-05#EVENT#1996461512126#SUBMISSION#2jgxyorbkf",
+        "gsi3pk": "EVENT_DATE#2026-08-05",
+        "gsi3sk": "EVENT#1996461512126#EMAIL#gocircleup@gmail.com#SUBMISSION#2jgxyorbkf",
+        "entity_type": "youform_submission",
         "submission_id": "2jgxyorbkf",
         "form_id": "iamr7tnj",
         "form_name": "Adult Authorization for Minor",
-        "event_id": "5155b508-96d8-4b3a-b2eb-ec3fdc38ca5c",
+        "youform_event_id": "5155b508-96d8-4b3a-b2eb-ec3fdc38ca5c",
         "event_type": "submission",
         "started_at": "2026-08-03T14:30:02.000000Z",
         "completed_at": "2026-08-03T15:32:33.000000Z",
+        "eventbrite_event_id": "1996461512126",
+        "eventbrite_event_slug": "architecture",
+        "eventbrite_event_name": "architecture",
+        "eventbrite_event_url": "https://www.eventbrite.co/e/architecture-tickets-1996461512126",
+        "event_date": "2026-08-05",
+        "registration_email": "gocircleup@gmail.com",
         "answers": [
             {"question": "Nombre Completo", "answer": "Juan Mesa"},
+            {
+                "question": "¿A qué evento asiste?",
+                "answer": "https://www.eventbrite.co/e/architecture-tickets-1996461512126",
+            },
+            {"question": "¿Qué día es el evento?", "answer": "2026-08-05"},
+            {
+                "question": "¿Con qué correo vas a realizar la inscripción?",
+                "answer": "GoCircleUp@gmail.com",
+            },
             {
                 "question": "Firma para autorizar",
                 "answer": "s3://test-signatures/youform-signatures/2jgxyorbkf/signature.png",
@@ -105,6 +130,9 @@ def test_store_submission_keeps_original_signature_url_when_copy_fails(monkeypat
         "started_at": "2026-08-03T14:30:02.000000Z",
         "completed_at": "2026-08-03T15:32:33.000000Z",
         "answers": {
+            "¿A qué evento asiste?": "https://www.eventbrite.co/e/architecture-tickets-1996461512126",
+            "¿Qué día es el evento?": "2026-08-05",
+            "¿Con qué correo vas a realizar la inscripción?": "GoCircleUp@gmail.com",
             "Firma para autorizar": "https://files.youform.com/signature-9ad1e753-b04a-47bb-b222-a02febabb170.png",
         },
     }
@@ -127,7 +155,19 @@ def test_store_submission_keeps_original_signature_url_when_copy_fails(monkeypat
     stored = mod._store_submission(parsed_body)
 
     assert stored is True
+    assert saved["Item"]["pk"] == "EVENT#1996461512126#FORM#iamr7tnj"
+    assert saved["Item"]["gsi2pk"] == "EMAIL#gocircleup@gmail.com"
+    assert saved["Item"]["gsi3pk"] == "EVENT_DATE#2026-08-05"
     assert saved["Item"]["answers"] == [
+        {
+            "question": "¿A qué evento asiste?",
+            "answer": "https://www.eventbrite.co/e/architecture-tickets-1996461512126",
+        },
+        {"question": "¿Qué día es el evento?", "answer": "2026-08-05"},
+        {
+            "question": "¿Con qué correo vas a realizar la inscripción?",
+            "answer": "GoCircleUp@gmail.com",
+        },
         {
             "question": "Firma para autorizar",
             "answer": "https://files.youform.com/signature-9ad1e753-b04a-47bb-b222-a02febabb170.png",

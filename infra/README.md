@@ -15,6 +15,8 @@ Este setup deja un flujo basico y profesional para Terraform con GitHub Actions 
 - API cloud de Eventbrite: `wearecircleup-prod-eventbrite-api`
 - Webhook Eventbrite Order Place: `wearecircleup-prod-eventbrite-order-webhook`
 - Tabla DynamoDB de Eventbrite Order Place: `wearecircleup-prod-eventbrite-order-submissions`
+- Cola SQS de validacion NNA: `wearecircleup-prod-minor-authorization-validation`
+- Tabla DynamoDB de jobs de validacion NNA: `wearecircleup-prod-minor-authorization-jobs`
 - Tabla DynamoDB de YouForm: `wearecircleup-prod-youform-submissions`
 
 ## Estructura
@@ -25,11 +27,14 @@ Este setup deja un flujo basico y profesional para Terraform con GitHub Actions 
 - `infra/modules/eventbrite-api`: modulo del servicio Eventbrite API en Lambda + API Gateway
 - `infra/modules/eventbrite-order-webhook`: modulo del receptor de webhooks de Eventbrite Order Place
 - `infra/modules/eventbrite-order-submissions-dynamodb`: modulo de DynamoDB para ordenes normalizadas de Eventbrite
+- `infra/modules/minor-authorization-jobs-dynamodb`: modulo de DynamoDB para jobs y auditoria de validacion NNA
+- `infra/modules/minor-authorization-validator`: modulo de Lambda + SQS para validar formularios de menores
 - `infra/modules/youform-webhook`: modulo del receptor de webhooks de YouForm en Lambda + API Gateway
 - `infra/modules/youform-submissions-dynamodb`: modulo de DynamoDB para submissions normalizados de YouForm
 - `infra/scripts/bootstrap-state-bucket.sh`: asegura que el bucket de state exista antes de ejecutar Terraform
 - `infra/scripts/build-eventbrite-api-package.sh`: empaqueta `eventbrite_api` para Lambda
 - `infra/scripts/build-eventbrite-order-webhook-package.sh`: empaqueta `eventbrite_order_webhook` para Lambda
+- `infra/scripts/build-minor-authorization-validator-package.sh`: empaqueta `minor_authorization_validator` para Lambda
 - `infra/scripts/build-youform-webhook-package.sh`: empaqueta `youform_webhook` para Lambda
 
 ## Flujos
@@ -43,6 +48,7 @@ Workflow: `.github/workflows/terraform-plan-apply.yml`
   - crea/configura el bucket remoto de state si no existe
   - empaqueta `eventbrite_api` para Lambda
   - empaqueta `eventbrite_order_webhook` para Lambda
+  - empaqueta `minor_authorization_validator` para Lambda
   - empaqueta `youform_webhook` para Lambda
   - corre `terraform init`, `validate`, `plan` y `apply`
 - En `workflow_dispatch`:

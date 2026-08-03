@@ -8,6 +8,7 @@ on:
       - "infra/**"
       - "eventbrite_api/**"
       - "eventbrite_order_webhook/**"
+      - "minor_authorization_validator/**"
       - ".github/workflows/terraform-plan-apply.yml"
       - ".github/workflows/terraform-destroy.yml"
   workflow_dispatch:
@@ -74,6 +75,10 @@ jobs:
       - name: Build youform_webhook Lambda package
         working-directory: .
         run: bash ./infra/scripts/build-youform-webhook-package.sh
+
+      - name: Build minor_authorization_validator Lambda package
+        working-directory: .
+        run: bash ./infra/scripts/build-minor-authorization-validator-package.sh
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4

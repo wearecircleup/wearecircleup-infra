@@ -69,6 +69,10 @@ jobs:
         working-directory: .
         run: bash ./infra/scripts/build-youform-webhook-package.sh
 
+      - name: Build minor_authorization_validator Lambda package
+        working-directory: .
+        run: bash ./infra/scripts/build-minor-authorization-validator-package.sh
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
         with:

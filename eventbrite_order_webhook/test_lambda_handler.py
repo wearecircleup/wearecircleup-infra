@@ -24,6 +24,8 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
                 "created": "2026-08-03T15:23:52Z",
                 "changed": "2026-08-03T15:24:04Z",
                 "name": "Nicolas CircleUp",
+                "first_name": "Nicolas",
+                "last_name": "CircleUp",
                 "email": "gocircleup@gmail.com",
             }
         if url == f"https://www.eventbriteapi.com/v3/orders/{order_id}/attendees/?page=1":
@@ -32,10 +34,37 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
                     {
                         "id": attendee_id,
                         "event_id": event_id,
+                        "order_id": order_id,
+                        "created": "2026-08-03T15:24:01Z",
+                        "changed": "2026-08-03T15:24:02Z",
+                        "status": "Attending",
+                        "checked_in": False,
+                        "cancelled": False,
+                        "refunded": False,
+                        "ticket_class_id": "3445465366",
                         "ticket_class_name": "Entrada General",
-                        "profile": {"email": "gocircleup@gmail.com"},
+                        "quantity": 1,
+                        "delivery_method": "electronic",
+                        "profile": {
+                            "name": "Nicolas CircleUp",
+                            "first_name": "Nicolas",
+                            "last_name": "CircleUp",
+                            "email": "gocircleup@gmail.com",
+                        },
+                        "barcodes": [
+                            {
+                                "barcode": "1541313019322792951476001",
+                                "status": "unused",
+                                "qr_code_url": "https://example.com/qr",
+                            }
+                        ],
                         "answers": [
-                            {"question": "Unused", "answer": "Ignored"},
+                            {
+                                "question_id": "323298496",
+                                "question": "Â¿CuÃ¡l es tu rango de edad?",
+                                "answer": "14 a 17 aÃ±os",
+                                "type": "multiple_choice",
+                            },
                         ],
                     }
                 ],
@@ -49,7 +78,7 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
     monkeypatch.setattr(mod, "_dynamodb_table", lambda table_name: FakeTable())
 
     result = mod._store_order_submission(
-        {"api_url": api_url, "config": {"action": "order.placed"}},
+        {"api_url": api_url, "config": {"action": "order.placed", "webhook_id": "15905335"}},
         {"time": "03/Aug/2026:15:24:46 +0000"},
     )
 
@@ -66,27 +95,62 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
     assert saved["Item"] == {
         "pk": f"ORDER#{order_id}",
         "sk": f"ORDER#{order_id}",
+        "entity_type": "eventbrite_order",
         "order_id": order_id,
         "event_id": event_id,
         "order_status": "placed",
         "order_created": "2026-08-03T15:23:52Z",
         "order_changed": "2026-08-03T15:24:04Z",
+        "attendee_count": 1,
         "buyer": {
             "name": "Nicolas CircleUp",
+            "first_name": "Nicolas",
+            "last_name": "CircleUp",
             "email": "gocircleup@gmail.com",
         },
         "attendees": [
             {
                 "attendee_id": attendee_id,
+                "event_id": event_id,
+                "order_id": order_id,
+                "created": "2026-08-03T15:24:01Z",
+                "changed": "2026-08-03T15:24:02Z",
+                "status": "Attending",
+                "checked_in": False,
+                "cancelled": False,
+                "refunded": False,
+                "ticket_class_id": "3445465366",
                 "ticket_class_name": "Entrada General",
-                "email": "gocircleup@gmail.com",
-                "answers": [],
+                "quantity": 1,
+                "delivery_method": "electronic",
+                "profile": {
+                    "name": "Nicolas CircleUp",
+                    "first_name": "Nicolas",
+                    "last_name": "CircleUp",
+                    "email": "gocircleup@gmail.com",
+                },
+                "barcodes": [
+                    {
+                        "barcode": "1541313019322792951476001",
+                        "status": "unused",
+                        "qr_code_url": "https://example.com/qr",
+                    }
+                ],
+                "answers": [
+                    {
+                        "question_id": "323298496",
+                        "question": "¿Cuál es tu rango de edad?",
+                        "answer": "14 a 17 años",
+                        "type": "multiple_choice",
+                    }
+                ],
             }
         ],
         "webhook": {
             "api_url": api_url,
             "received_at": "03/Aug/2026:15:24:46 +0000",
             "action": "order.placed",
+            "webhook_id": "15905335",
         },
     }
 

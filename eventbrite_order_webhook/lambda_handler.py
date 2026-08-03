@@ -19,6 +19,17 @@ def _log_json(message: str, payload: dict[str, Any]) -> None:
     logger.info("%s: %s", message, json.dumps(payload, ensure_ascii=False, default=str))
 
 
+def _clean_text(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    if not any(marker in value for marker in ("Ã", "Â", "â", "Ð")):
+        return value
+    try:
+        return value.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
+
+
 def _dynamodb_table(table_name: str):
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     return boto3.resource("dynamodb", region_name=region).Table(table_name)
@@ -89,11 +100,45 @@ def _extract_order_id(api_url: str) -> str | None:
 
 def _normalize_attendee(attendee: dict[str, Any]) -> dict[str, Any]:
     profile = attendee.get("profile") or {}
+    answers = attendee.get("answers") or []
+    barcodes = attendee.get("barcodes") or []
     return {
-        "attendee_id": attendee.get("id"),
-        "ticket_class_name": attendee.get("ticket_class_name"),
-        "email": profile.get("email"),
-        "answers": [],
+        "attendee_id": str(attendee.get("id") or ""),
+        "event_id": attendee.get("event_id"),
+        "order_id": attendee.get("order_id"),
+        "created": attendee.get("created"),
+        "changed": attendee.get("changed"),
+        "status": attendee.get("status"),
+        "checked_in": bool(attendee.get("checked_in")),
+        "cancelled": bool(attendee.get("cancelled")),
+        "refunded": bool(attendee.get("refunded")),
+        "ticket_class_id": attendee.get("ticket_class_id"),
+        "ticket_class_name": _clean_text(attendee.get("ticket_class_name")),
+        "quantity": attendee.get("quantity"),
+        "delivery_method": attendee.get("delivery_method"),
+        "profile": {
+            "name": _clean_text(profile.get("name")),
+            "first_name": _clean_text(profile.get("first_name")),
+            "last_name": _clean_text(profile.get("last_name")),
+            "email": profile.get("email"),
+        },
+        "barcodes": [
+            {
+                "barcode": barcode.get("barcode"),
+                "status": barcode.get("status"),
+                "qr_code_url": barcode.get("qr_code_url"),
+            }
+            for barcode in barcodes
+        ],
+        "answers": [
+            {
+                "question_id": str(answer.get("question_id") or ""),
+                "question": _clean_text(answer.get("question")),
+                "answer": _clean_text(answer.get("answer")),
+                "type": answer.get("type"),
+            }
+            for answer in answers
+        ],
     }
 
 
@@ -119,13 +164,17 @@ def _build_submission_item(
     return {
         "pk": f"ORDER#{order_id}",
         "sk": f"ORDER#{order_id}",
+        "entity_type": "eventbrite_order",
         "order_id": order_id,
         "event_id": order.get("event_id"),
         "order_status": order.get("status"),
         "order_created": order.get("created"),
         "order_changed": order.get("changed"),
+        "attendee_count": len(attendees),
         "buyer": {
-            "name": order.get("name"),
+            "name": _clean_text(order.get("name")),
+            "first_name": _clean_text(order.get("first_name")),
+            "last_name": _clean_text(order.get("last_name")),
             "email": order.get("email"),
         },
         "attendees": [_normalize_attendee(attendee) for attendee in attendees],
@@ -133,6 +182,7 @@ def _build_submission_item(
             "api_url": webhook_payload.get("api_url"),
             "received_at": received_at,
             "action": ((webhook_payload.get("config") or {}).get("action")),
+            "webhook_id": ((webhook_payload.get("config") or {}).get("webhook_id")),
         },
     }
 

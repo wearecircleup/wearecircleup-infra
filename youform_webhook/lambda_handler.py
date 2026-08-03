@@ -3,6 +3,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -14,6 +15,14 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 SIGNATURE_QUESTION = "Firma para autorizar"
+EVENT_URL_QUESTION = "¿A qué evento asiste?"
+EVENT_DATE_QUESTION = "¿Qué día es el evento?"
+REGISTRATION_EMAIL_QUESTION = "¿Con qué correo vas a realizar la inscripción?"
+UNKNOWN_EVENT_ID = "UNKNOWN_EVENT"
+
+
+def _normalized_question_key(value: str) -> str:
+    return " ".join(value.strip().lower().split())
 
 
 def _dynamodb_table(table_name: str):
@@ -103,22 +112,108 @@ def _normalize_answers(parsed_body: dict[str, Any]) -> list[dict[str, Any]]:
     return normalized
 
 
+def _answer_lookup(parsed_body: dict[str, Any]) -> dict[str, Any]:
+    answers = parsed_body.get("answers")
+    if not isinstance(answers, dict):
+        return {}
+    return {
+        _normalized_question_key(str(question)): answer
+        for question, answer in answers.items()
+    }
+
+
+def _extract_eventbrite_event_metadata(event_url: Any) -> dict[str, str | None]:
+    if not isinstance(event_url, str) or not event_url.strip():
+        return {
+            "eventbrite_event_url": None,
+            "eventbrite_event_id": None,
+            "eventbrite_event_slug": None,
+            "eventbrite_event_name": None,
+        }
+    cleaned_url = event_url.strip()
+    match = re.search(r"/e/([^/?#]+)-tickets-(\d+)", cleaned_url)
+    if not match:
+        return {
+            "eventbrite_event_url": cleaned_url,
+            "eventbrite_event_id": None,
+            "eventbrite_event_slug": None,
+            "eventbrite_event_name": None,
+        }
+    slug = match.group(1)
+    return {
+        "eventbrite_event_url": cleaned_url,
+        "eventbrite_event_id": match.group(2),
+        "eventbrite_event_slug": slug,
+        "eventbrite_event_name": slug.replace("-", " "),
+    }
+
+
+def _build_keys(
+    eventbrite_event_id: str | None,
+    form_id: Any,
+    submission_id: Any,
+    registrant_email: str | None,
+    event_date: str | None,
+    completed_at: str | None,
+) -> dict[str, str]:
+    safe_event_id = eventbrite_event_id or UNKNOWN_EVENT_ID
+    safe_form_id = str(form_id or "UNKNOWN_FORM")
+    safe_submission_id = str(submission_id or "UNKNOWN_SUBMISSION")
+    keys = {
+        "pk": f"EVENT#{safe_event_id}#FORM#{safe_form_id}",
+        "sk": f"SUBMISSION#{safe_submission_id}",
+        "gsi1pk": f"EVENT#{safe_event_id}",
+        "gsi1sk": f"COMPLETED_AT#{completed_at or 'UNKNOWN'}#SUBMISSION#{safe_submission_id}",
+    }
+    if registrant_email:
+        normalized_email = registrant_email.strip().lower()
+        keys["gsi2pk"] = f"EMAIL#{normalized_email}"
+        keys["gsi2sk"] = f"EVENT_DATE#{event_date or 'UNKNOWN'}#EVENT#{safe_event_id}#SUBMISSION#{safe_submission_id}"
+    if event_date:
+        keys["gsi3pk"] = f"EVENT_DATE#{event_date}"
+        keys["gsi3sk"] = (
+            f"EVENT#{safe_event_id}#EMAIL#{(registrant_email or 'UNKNOWN').strip().lower()}#SUBMISSION#{safe_submission_id}"
+        )
+    return keys
+
+
 def _build_submission_item(parsed_body: dict[str, Any]) -> dict[str, Any] | None:
     submission_id = parsed_body.get("submission_id")
     if not submission_id:
         return None
-    return {
-        "pk": f"SUBMISSION#{submission_id}",
-        "sk": f"SUBMISSION#{submission_id}",
+    answer_lookup = _answer_lookup(parsed_body)
+    event_metadata = _extract_eventbrite_event_metadata(
+        answer_lookup.get(_normalized_question_key(EVENT_URL_QUESTION))
+    )
+    event_date = answer_lookup.get(_normalized_question_key(EVENT_DATE_QUESTION))
+    registrant_email = answer_lookup.get(_normalized_question_key(REGISTRATION_EMAIL_QUESTION))
+    completed_at = parsed_body.get("completed_at")
+    item = {
+        **_build_keys(
+            event_metadata["eventbrite_event_id"],
+            parsed_body.get("form_id"),
+            submission_id,
+            registrant_email if isinstance(registrant_email, str) else None,
+            event_date if isinstance(event_date, str) else None,
+            completed_at if isinstance(completed_at, str) else None,
+        ),
+        "entity_type": "youform_submission",
         "submission_id": submission_id,
         "form_id": parsed_body.get("form_id"),
         "form_name": parsed_body.get("form_name"),
-        "event_id": parsed_body.get("event_id"),
+        "youform_event_id": parsed_body.get("event_id"),
         "event_type": parsed_body.get("event_type"),
         "started_at": parsed_body.get("started_at"),
-        "completed_at": parsed_body.get("completed_at"),
+        "completed_at": completed_at,
+        "eventbrite_event_id": event_metadata["eventbrite_event_id"],
+        "eventbrite_event_slug": event_metadata["eventbrite_event_slug"],
+        "eventbrite_event_name": event_metadata["eventbrite_event_name"],
+        "eventbrite_event_url": event_metadata["eventbrite_event_url"],
+        "event_date": event_date,
+        "registration_email": registrant_email.lower().strip() if isinstance(registrant_email, str) else None,
         "answers": _normalize_answers(parsed_body),
     }
+    return {key: value for key, value in item.items() if value is not None}
 
 
 def _store_submission(parsed_body: dict[str, Any]) -> bool:

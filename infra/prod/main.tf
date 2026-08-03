@@ -34,6 +34,13 @@ module "eventbrite_order_submissions_dynamodb" {
   common_tags = local.common_tags
 }
 
+module "minor_authorization_jobs_dynamodb" {
+  source = "../modules/minor-authorization-jobs-dynamodb"
+
+  table_name  = local.minor_authorization_jobs_table
+  common_tags = local.common_tags
+}
+
 module "eventbrite_order_webhook" {
   source = "../modules/eventbrite-order-webhook"
 
@@ -76,6 +83,25 @@ module "youform_webhook" {
   signatures_bucket_name = module.youform_signatures_s3.bucket_name
   submissions_table_arn  = module.youform_submissions_dynamodb.table_arn
   submissions_table_name = module.youform_submissions_dynamodb.table_name
+}
+
+module "minor_authorization_validator" {
+  source = "../modules/minor-authorization-validator"
+
+  common_tags                             = local.common_tags
+  dlq_name                                = local.minor_authorization_validation_dlq
+  eventbrite_order_submissions_table_arn  = module.eventbrite_order_submissions_dynamodb.table_arn
+  eventbrite_order_submissions_table_name = module.eventbrite_order_submissions_dynamodb.table_name
+  eventbrite_secret_arn                   = module.secretsmanager_eventbrite.secret_arn
+  eventbrite_secret_name                  = module.secretsmanager_eventbrite.secret_name
+  jobs_table_arn                          = module.minor_authorization_jobs_dynamodb.table_arn
+  jobs_table_name                         = module.minor_authorization_jobs_dynamodb.table_name
+  lambda_function_name                    = local.minor_authorization_validator_lambda
+  lambda_package_path                     = abspath("${path.root}/../artifacts/minor-authorization-validator/minor_authorization_validator_lambda.zip")
+  lambda_role_name                        = local.minor_authorization_validator_role
+  queue_name                              = local.minor_authorization_validation_queue
+  youform_submissions_table_arn           = module.youform_submissions_dynamodb.table_arn
+  youform_submissions_table_name          = module.youform_submissions_dynamodb.table_name
 }
 
 moved {

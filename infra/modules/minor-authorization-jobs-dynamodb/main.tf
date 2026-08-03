@@ -34,16 +34,6 @@ resource "aws_dynamodb_table" "this" {
     type = "S"
   }
 
-  attribute {
-    name = "gsi3pk"
-    type = "S"
-  }
-
-  attribute {
-    name = "gsi3sk"
-    type = "S"
-  }
-
   global_secondary_index {
     name            = "gsi1"
     hash_key        = "gsi1pk"
@@ -55,13 +45,6 @@ resource "aws_dynamodb_table" "this" {
     name            = "gsi2"
     hash_key        = "gsi2pk"
     range_key       = "gsi2sk"
-    projection_type = "ALL"
-  }
-
-  global_secondary_index {
-    name            = "gsi3"
-    hash_key        = "gsi3pk"
-    range_key       = "gsi3sk"
     projection_type = "ALL"
   }
 
