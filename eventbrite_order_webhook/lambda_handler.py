@@ -14,6 +14,9 @@ import boto3
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+AGE_RANGE_QUESTION = "¿Cuál es tu rango de edad?"
+MINOR_AGE_RANGE_ANSWER = "14 a 17 años"
+
 
 def _log_json(message: str, payload: dict[str, Any]) -> None:
     logger.info("%s: %s", message, json.dumps(payload, ensure_ascii=False, default=str))
@@ -33,6 +36,11 @@ def _clean_text(value: Any) -> Any:
 def _dynamodb_table(table_name: str):
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     return boto3.resource("dynamodb", region_name=region).Table(table_name)
+
+
+def _sqs_client():
+    region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+    return boto3.client("sqs", region_name=region)
 
 
 def _load_secret(secret_id: str) -> dict[str, str]:
@@ -187,6 +195,98 @@ def _build_submission_item(
     }
 
 
+def _is_minor_attendee(attendee: dict[str, Any]) -> tuple[bool, str | None]:
+    for answer in attendee.get("answers") or []:
+        question = _clean_text(answer.get("question"))
+        value = _clean_text(answer.get("answer"))
+        if question == AGE_RANGE_QUESTION and value == MINOR_AGE_RANGE_ANSWER:
+            return True, value
+    return False, None
+
+
+def _build_minor_authorization_jobs(
+    item: dict[str, Any],
+    request_context: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    jobs: list[dict[str, Any]] = []
+    detected_at = (
+        (request_context or {}).get("time")
+        or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    )
+    buyer = item.get("buyer") or {}
+    for attendee in item.get("attendees") or []:
+        is_minor, age_range = _is_minor_attendee(attendee)
+        if not is_minor:
+            continue
+        profile = attendee.get("profile") or {}
+        attendee_email = profile.get("email")
+        buyer_email = buyer.get("email")
+        jobs.append(
+            {
+                "event_id": item.get("event_id"),
+                "order_id": item.get("order_id"),
+                "attendee_id": attendee.get("attendee_id"),
+                "attendee_email": attendee_email,
+                "buyer_email": buyer_email,
+                "age_range": age_range,
+                "detected_at": detected_at,
+                "request_id": (request_context or {}).get("requestId"),
+                "source": "eventbrite_order_webhook",
+            }
+        )
+    return jobs
+
+
+def _enqueue_minor_authorization_jobs(
+    item: dict[str, Any],
+    request_context: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    queue_url = os.getenv("AUTHORIZATION_QUEUE_URL")
+    jobs = _build_minor_authorization_jobs(item, request_context)
+    if not jobs:
+        _log_json(
+            "No minor authorization jobs detected for Eventbrite order",
+            {
+                "order_id": item.get("order_id"),
+                "event_id": item.get("event_id"),
+                "attendee_count": item.get("attendee_count"),
+            },
+        )
+        return []
+    if not queue_url:
+        logger.warning(
+            "AUTHORIZATION_QUEUE_URL is not configured. Minor authorization jobs were detected but not enqueued."
+        )
+        _log_json(
+            "Minor authorization jobs skipped because queue is not configured",
+            {
+                "order_id": item.get("order_id"),
+                "event_id": item.get("event_id"),
+                "jobs": jobs,
+            },
+        )
+        return []
+
+    client = _sqs_client()
+    enqueued_jobs: list[dict[str, Any]] = []
+    for job in jobs:
+        response = client.send_message(QueueUrl=queue_url, MessageBody=json.dumps(job, ensure_ascii=False))
+        enqueued_job = {
+            **job,
+            "message_id": response.get("MessageId"),
+        }
+        enqueued_jobs.append(enqueued_job)
+        _log_json(
+            "Enqueued minor authorization validation job",
+            {
+                "queue_url": queue_url,
+                "message_id": response.get("MessageId"),
+                "job": job,
+            },
+        )
+    return enqueued_jobs
+
+
 def _store_order_submission(webhook_payload: dict[str, Any], request_context: dict[str, Any] | None) -> dict[str, Any]:
     api_url = webhook_payload.get("api_url")
     if not api_url:
@@ -231,6 +331,7 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
     )
     item = _build_submission_item(webhook_payload, order, attendees, received_at)
     _dynamodb_table(table_name).put_item(Item=item)
+    enqueued_jobs = _enqueue_minor_authorization_jobs(item, request_context)
     _log_json(
         "Stored Eventbrite submission in DynamoDB",
         {
@@ -239,6 +340,7 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
             "event_id": order.get("event_id"),
             "attendee_count": len(attendees),
             "webhook_action": (webhook_payload.get("config") or {}).get("action"),
+            "minor_authorization_jobs_enqueued": len(enqueued_jobs),
             "stored_item": item,
         },
     )
@@ -247,6 +349,7 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
         "order_id": order_id,
         "attendee_count": len(attendees),
         "webhook_action": (webhook_payload.get("config") or {}).get("action"),
+        "minor_authorization_jobs_enqueued": len(enqueued_jobs),
     }
 
 

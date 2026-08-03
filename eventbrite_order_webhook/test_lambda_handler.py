@@ -8,10 +8,16 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
     api_url = f"https://www.eventbriteapi.com/v3/orders/{order_id}/"
     saved: dict[str, object] = {}
     requested_urls: list[str] = []
+    sent_messages: list[dict[str, object]] = []
 
     class FakeTable:
         def put_item(self, Item):
             saved["Item"] = Item
+
+    class FakeSQS:
+        def send_message(self, **kwargs):
+            sent_messages.append(kwargs)
+            return {"MessageId": "msg-123"}
 
     def fake_request_json(url: str, token: str):
         requested_urls.append(url)
@@ -74,8 +80,10 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
 
     monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
     monkeypatch.setenv("EVENTBRITE_PRIVATE_TOKEN", "token-123")
+    monkeypatch.setenv("AUTHORIZATION_QUEUE_URL", "https://sqs.us-east-1.amazonaws.com/123/minor-auth")
     monkeypatch.setattr(mod, "_request_json", fake_request_json)
     monkeypatch.setattr(mod, "_dynamodb_table", lambda table_name: FakeTable())
+    monkeypatch.setattr(mod, "_sqs_client", lambda: FakeSQS())
 
     result = mod._store_order_submission(
         {"api_url": api_url, "config": {"action": "order.placed", "webhook_id": "15905335"}},
@@ -87,10 +95,22 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
         "order_id": order_id,
         "attendee_count": 1,
         "webhook_action": "order.placed",
+        "minor_authorization_jobs_enqueued": 1,
     }
     assert requested_urls == [
         api_url,
         f"https://www.eventbriteapi.com/v3/orders/{order_id}/attendees/?page=1",
+    ]
+    assert sent_messages == [
+        {
+            "QueueUrl": "https://sqs.us-east-1.amazonaws.com/123/minor-auth",
+            "MessageBody": (
+                '{"event_id": "1996456922398", "order_id": "15413130193", "attendee_id": "22792951476", '
+                '"attendee_email": "gocircleup@gmail.com", "buyer_email": "gocircleup@gmail.com", '
+                '"age_range": "14 a 17 años", "detected_at": "03/Aug/2026:15:24:46 +0000", '
+                '"request_id": null, "source": "eventbrite_order_webhook"}'
+            ),
+        }
     ]
     assert saved["Item"] == {
         "pk": f"ORDER#{order_id}",
@@ -171,3 +191,70 @@ def test_store_order_submission_skips_unsupported_api_url(monkeypatch):
         "stored": False,
         "reason": "unsupported_api_url",
     }
+
+
+def test_store_order_submission_does_not_enqueue_when_no_minor_is_detected(monkeypatch):
+    order_id = "15413130194"
+    event_id = "1996456922399"
+    api_url = f"https://www.eventbriteapi.com/v3/orders/{order_id}/"
+    sent_messages: list[dict[str, object]] = []
+
+    class FakeTable:
+        def put_item(self, Item):
+            return None
+
+    class FakeSQS:
+        def send_message(self, **kwargs):
+            sent_messages.append(kwargs)
+            return {"MessageId": "msg-456"}
+
+    def fake_request_json(url: str, token: str):
+        assert token == "token-123"
+        if url == api_url:
+            return {
+                "id": order_id,
+                "event_id": event_id,
+                "status": "placed",
+                "created": "2026-08-03T15:23:52Z",
+                "changed": "2026-08-03T15:24:04Z",
+                "name": "Adult Person",
+                "first_name": "Adult",
+                "last_name": "Person",
+                "email": "adult@example.com",
+            }
+        if url == f"https://www.eventbriteapi.com/v3/orders/{order_id}/attendees/?page=1":
+            return {
+                "attendees": [
+                    {
+                        "id": "22792951477",
+                        "event_id": event_id,
+                        "order_id": order_id,
+                        "profile": {"email": "adult@example.com"},
+                        "answers": [
+                            {
+                                "question_id": "323298497",
+                                "question": "Â¿CuÃ¡l es tu rango de edad?",
+                                "answer": "18 a 24 años",
+                                "type": "multiple_choice",
+                            },
+                        ],
+                    }
+                ],
+                "pagination": {"has_more_items": False},
+            }
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
+    monkeypatch.setenv("EVENTBRITE_PRIVATE_TOKEN", "token-123")
+    monkeypatch.setenv("AUTHORIZATION_QUEUE_URL", "https://sqs.us-east-1.amazonaws.com/123/minor-auth")
+    monkeypatch.setattr(mod, "_request_json", fake_request_json)
+    monkeypatch.setattr(mod, "_dynamodb_table", lambda table_name: FakeTable())
+    monkeypatch.setattr(mod, "_sqs_client", lambda: FakeSQS())
+
+    result = mod._store_order_submission(
+        {"api_url": api_url, "config": {"action": "order.placed"}},
+        {"time": "03/Aug/2026:15:24:46 +0000"},
+    )
+
+    assert result["minor_authorization_jobs_enqueued"] == 0
+    assert sent_messages == []

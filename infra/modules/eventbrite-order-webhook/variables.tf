@@ -47,3 +47,13 @@ variable "submissions_table_name" {
   description = "DynamoDB table name used to store normalized Eventbrite order submissions."
   type        = string
 }
+
+variable "authorization_queue_arn" {
+  description = "SQS queue ARN used to enqueue minor authorization validation jobs."
+  type        = string
+}
+
+variable "authorization_queue_url" {
+  description = "SQS queue URL used to enqueue minor authorization validation jobs."
+  type        = string
+}

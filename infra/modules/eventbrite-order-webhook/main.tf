@@ -62,6 +62,26 @@ resource "aws_iam_role_policy" "dynamodb" {
   })
 }
 
+resource "aws_iam_role_policy" "sqs" {
+  name = "${var.lambda_function_name}-sqs"
+  role = aws_iam_role.lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage"
+        ]
+        Resource = [
+          var.authorization_queue_arn
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.lambda_function_name}"
   retention_in_days = 14
@@ -85,6 +105,7 @@ resource "aws_lambda_function" "this" {
       EVENTBRITE_SECRET_ID    = var.eventbrite_secret_name
       SUBMISSIONS_TABLE_NAME  = var.submissions_table_name
       EVENTBRITE_API_BASE_URL = "https://www.eventbriteapi.com/v3"
+      AUTHORIZATION_QUEUE_URL = var.authorization_queue_url
     }
   }
 

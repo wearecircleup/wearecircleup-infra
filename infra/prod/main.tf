@@ -44,16 +44,18 @@ module "minor_authorization_jobs_dynamodb" {
 module "eventbrite_order_webhook" {
   source = "../modules/eventbrite-order-webhook"
 
-  api_name               = local.eventbrite_order_webhook_api
-  common_tags            = local.common_tags
-  eventbrite_secret_arn  = module.secretsmanager_eventbrite.secret_arn
-  eventbrite_secret_name = module.secretsmanager_eventbrite.secret_name
-  lambda_function_name   = local.eventbrite_order_webhook_lambda
-  lambda_package_path    = abspath("${path.root}/../artifacts/eventbrite-order-webhook/eventbrite_order_webhook_lambda.zip")
-  lambda_role_name       = local.eventbrite_order_webhook_role
-  route_path             = local.eventbrite_order_webhook_path
-  submissions_table_arn  = module.eventbrite_order_submissions_dynamodb.table_arn
-  submissions_table_name = module.eventbrite_order_submissions_dynamodb.table_name
+  api_name                = local.eventbrite_order_webhook_api
+  common_tags             = local.common_tags
+  eventbrite_secret_arn   = module.secretsmanager_eventbrite.secret_arn
+  eventbrite_secret_name  = module.secretsmanager_eventbrite.secret_name
+  lambda_function_name    = local.eventbrite_order_webhook_lambda
+  lambda_package_path     = abspath("${path.root}/../artifacts/eventbrite-order-webhook/eventbrite_order_webhook_lambda.zip")
+  lambda_role_name        = local.eventbrite_order_webhook_role
+  route_path              = local.eventbrite_order_webhook_path
+  authorization_queue_arn = module.minor_authorization_validator.queue_arn
+  authorization_queue_url = module.minor_authorization_validator.queue_url
+  submissions_table_arn   = module.eventbrite_order_submissions_dynamodb.table_arn
+  submissions_table_name  = module.eventbrite_order_submissions_dynamodb.table_name
 }
 
 module "youform_submissions_dynamodb" {
