@@ -28,6 +28,16 @@ variable "route_path" {
   type        = string
 }
 
+variable "signatures_bucket_arn" {
+  description = "S3 bucket ARN used to store copied signature images."
+  type        = string
+}
+
+variable "signatures_bucket_name" {
+  description = "S3 bucket name used to store copied signature images."
+  type        = string
+}
+
 variable "submissions_table_arn" {
   description = "DynamoDB table ARN used to store normalized YouForm submissions."
   type        = string

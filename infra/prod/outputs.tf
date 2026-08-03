@@ -77,3 +77,8 @@ output "youform_webhook_submissions_table_name" {
   description = "DynamoDB table name storing normalized YouForm submissions."
   value       = module.youform_submissions_dynamodb.table_name
 }
+
+output "youform_signatures_bucket_name" {
+  description = "Private S3 bucket name storing copied YouForm signatures."
+  value       = module.youform_signatures_s3.bucket_name
+}

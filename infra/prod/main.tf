@@ -56,6 +56,13 @@ module "youform_submissions_dynamodb" {
   common_tags = local.common_tags
 }
 
+module "youform_signatures_s3" {
+  source = "../modules/youform-signatures-s3"
+
+  bucket_name = local.youform_signatures_bucket
+  common_tags = local.common_tags
+}
+
 module "youform_webhook" {
   source = "../modules/youform-webhook"
 
@@ -65,6 +72,8 @@ module "youform_webhook" {
   lambda_package_path    = abspath("${path.root}/../artifacts/youform-webhook/youform_webhook_lambda.zip")
   lambda_role_name       = local.youform_webhook_role
   route_path             = local.youform_webhook_path
+  signatures_bucket_arn  = module.youform_signatures_s3.bucket_arn
+  signatures_bucket_name = module.youform_signatures_s3.bucket_name
   submissions_table_arn  = module.youform_submissions_dynamodb.table_arn
   submissions_table_name = module.youform_submissions_dynamodb.table_name
 }

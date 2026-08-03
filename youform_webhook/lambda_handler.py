@@ -1,8 +1,11 @@
 import base64
 import json
 import logging
+import mimetypes
 import os
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 import boto3
 
@@ -10,10 +13,17 @@ import boto3
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+SIGNATURE_QUESTION = "Firma para autorizar"
+
 
 def _dynamodb_table(table_name: str):
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     return boto3.resource("dynamodb", region_name=region).Table(table_name)
+
+
+def _s3_client():
+    region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+    return boto3.client("s3", region_name=region)
 
 
 def _decoded_body(event: dict[str, Any]) -> str:
@@ -27,11 +37,57 @@ def _decoded_body(event: dict[str, Any]) -> str:
     return body
 
 
+def _signature_storage_location(parsed_body: dict[str, Any], signature_url: str) -> tuple[str, str] | None:
+    bucket_name = os.getenv("SIGNATURES_BUCKET_NAME")
+    submission_id = parsed_body.get("submission_id")
+    if not bucket_name or not submission_id:
+        return None
+    parsed = urlparse(signature_url)
+    extension = os.path.splitext(parsed.path)[1].lower()
+    if not extension:
+        extension = ".png"
+    key = f"youform-signatures/{submission_id}/signature{extension}"
+    return bucket_name, key
+
+
+def _download_signature(signature_url: str) -> tuple[bytes, str | None]:
+    request = Request(signature_url, headers={"Accept": "*/*"}, method="GET")
+    with urlopen(request, timeout=20) as response:
+        content = response.read()
+        content_type = response.headers.get_content_type() if response.headers else None
+    return content, content_type
+
+
+def _store_signature(parsed_body: dict[str, Any], signature_url: str) -> str:
+    location = _signature_storage_location(parsed_body, signature_url)
+    if location is None:
+        raise RuntimeError("SIGNATURES_BUCKET_NAME and submission_id are required to store signatures.")
+    bucket_name, key = location
+    content, content_type = _download_signature(signature_url)
+    if not content_type:
+        guessed, _ = mimetypes.guess_type(signature_url)
+        content_type = guessed or "application/octet-stream"
+    _s3_client().put_object(
+        Bucket=bucket_name,
+        Key=key,
+        Body=content,
+        ContentType=content_type,
+    )
+    logger.info("Stored YouForm signature for submission %s at s3://%s/%s", parsed_body.get("submission_id"), bucket_name, key)
+    return f"s3://{bucket_name}/{key}"
+
+
 def _normalize_answers(parsed_body: dict[str, Any]) -> list[dict[str, Any]]:
     answers = parsed_body.get("answers")
     if not isinstance(answers, dict):
         return []
-    return [{"question": str(question), "answer": answer} for question, answer in answers.items()]
+    normalized: list[dict[str, Any]] = []
+    for question, answer in answers.items():
+        normalized_answer = answer
+        if str(question) == SIGNATURE_QUESTION and isinstance(answer, str) and answer.strip():
+            normalized_answer = _store_signature(parsed_body, answer.strip())
+        normalized.append({"question": str(question), "answer": normalized_answer})
+    return normalized
 
 
 def _build_submission_item(parsed_body: dict[str, Any]) -> dict[str, Any] | None:
@@ -83,10 +139,9 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         json.dumps(
             {
                 "request_context": event.get("requestContext"),
-                "headers": event.get("headers"),
-                "query_string_parameters": event.get("queryStringParameters"),
                 "raw_body": raw_body,
                 "parsed_body": parsed_body,
+                "stored": stored,
             },
             ensure_ascii=False,
             default=str,

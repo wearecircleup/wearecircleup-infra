@@ -42,6 +42,26 @@ resource "aws_iam_role_policy" "dynamodb" {
   })
 }
 
+resource "aws_iam_role_policy" "s3_signatures" {
+  name = "${var.lambda_function_name}-s3-signatures"
+  role = aws_iam_role.lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject"
+        ]
+        Resource = [
+          "${var.signatures_bucket_arn}/*"
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.lambda_function_name}"
   retention_in_days = 14
@@ -63,6 +83,7 @@ resource "aws_lambda_function" "this" {
   environment {
     variables = {
       SUBMISSIONS_TABLE_NAME = var.submissions_table_name
+      SIGNATURES_BUCKET_NAME = var.signatures_bucket_name
     }
   }
 
