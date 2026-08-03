@@ -192,7 +192,7 @@ AGE_RANGE_CHOICES = [
     "55 años o más",
 ]
 MINOR_AUTHORIZATION_QUESTION = (
-    "<em>Confirmo que leí la sección NNA Primero, Siempre "
+    "<em>Acepto que leí la sección NNA Primero, Siempre "
     "y entiendo que, si tengo entre 14 y 17 años, el formulario es obligatorio, debe ser diligenciado por mi representante legal "
     "y debe completarse antes de registrar esta orden. De lo contrario, la inscripción queda sujeta a cancelación.</em>"
 )
@@ -386,7 +386,7 @@ class EventInstantiation(BaseModel):
                 "question": {"html": MINOR_AUTHORIZATION_QUESTION},
                 "type": "checkbox",
                 "required": True,
-                "choices": [{"answer": {"html": "Entiendo"}}],
+                "choices": [{"answer": {"html": "Acepto"}}],
                 "ticket_classes": [],
             },
             {
@@ -404,7 +404,7 @@ class EventInstantiation(BaseModel):
             questions.append(
                 {
                     "question": {
-                        "html": f"<em>Acepto que el lugar anfitrión solicite un consumo mínimo de {amount} COP para consumo propio, cobrado por el lugar y no por Circle Up Community.</em>",
+                        "html": f"<em>Acepto que en el lugar (Location) el anfitrión solicite un consumo mínimo de {amount} COP para uso propio, cobrado por el lugar y no por Circle Up Community?</em>",
                     },
                     "type": "checkbox",
                     "required": True,
