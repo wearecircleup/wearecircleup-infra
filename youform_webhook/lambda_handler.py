@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 import boto3
+from boto3.dynamodb.conditions import Key
 
 
 logger = logging.getLogger()
@@ -21,13 +22,32 @@ REGISTRATION_EMAIL_QUESTION = "¿Con qué correo vas a realizar la inscripción?
 UNKNOWN_EVENT_ID = "UNKNOWN_EVENT"
 
 
+def _clean_text(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    if not any(marker in value for marker in ("Ã", "Â", "â", "Ð")):
+        return value
+    try:
+        return value.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
+
+
 def _normalized_question_key(value: str) -> str:
-    return " ".join(value.strip().lower().split())
+    cleaned = _clean_text(value)
+    return " ".join(str(cleaned).strip().lower().split())
 
 
 def _dynamodb_table(table_name: str):
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     return boto3.resource("dynamodb", region_name=region).Table(table_name)
+
+
+def _minor_authorization_jobs_table():
+    table_name = os.getenv("MINOR_AUTHORIZATION_JOBS_TABLE_NAME")
+    if not table_name:
+        return None
+    return _dynamodb_table(table_name)
 
 
 def _s3_client():
@@ -216,18 +236,96 @@ def _build_submission_item(parsed_body: dict[str, Any]) -> dict[str, Any] | None
     return {key: value for key, value in item.items() if value is not None}
 
 
-def _store_submission(parsed_body: dict[str, Any]) -> bool:
+def _reconcile_minor_authorization_job(item: dict[str, Any]) -> dict[str, Any]:
+    jobs_table = _minor_authorization_jobs_table()
+    event_id = item.get("eventbrite_event_id")
+    registration_email = item.get("registration_email")
+    submission_id = item.get("submission_id")
+    completed_at = item.get("completed_at")
+
+    if jobs_table is None:
+        logger.info("Skipping minor authorization reconciliation because MINOR_AUTHORIZATION_JOBS_TABLE_NAME is not configured.")
+        return {"reconciled": False, "reason": "jobs_table_not_configured"}
+    if not event_id or not registration_email:
+        logger.info(
+            "Skipping minor authorization reconciliation because event_id or registration_email is missing for submission %s.",
+            submission_id,
+        )
+        return {"reconciled": False, "reason": "missing_event_or_email"}
+
+    response = jobs_table.query(
+        IndexName="gsi2",
+        KeyConditionExpression=Key("gsi2pk").eq(f"EMAIL#{registration_email}"),
+    )
+    items = response.get("Items") or []
+    matching_jobs = [
+        job for job in items
+        if job.get("event_id") == event_id and job.get("status") in {"pending", "missing_form"}
+    ]
+    if not matching_jobs:
+        logger.info(
+            "No pending minor authorization job matched submission %s for event %s and email %s.",
+            submission_id,
+            event_id,
+            registration_email,
+        )
+        return {"reconciled": False, "reason": "no_matching_job"}
+
+    updated_jobs: list[dict[str, Any]] = []
+    for job in matching_jobs:
+        pk = job["pk"]
+        sk = job["sk"]
+        gsi1sk = f"COMPLETED_AT#{completed_at or 'UNKNOWN'}#EVENT#{event_id}#ATTENDEE#{job.get('attendee_id') or 'UNKNOWN_ATTENDEE'}"
+        jobs_table.update_item(
+            Key={"pk": pk, "sk": sk},
+            UpdateExpression=(
+                "SET #status = :status, "
+                "validation_result = :validation_result, "
+                "authorization_found = :authorization_found, "
+                "matched_submission_id = :matched_submission_id, "
+                "completed_at = :completed_at, "
+                "last_attempt_at = :last_attempt_at, "
+                "gsi1pk = :gsi1pk, "
+                "gsi1sk = :gsi1sk"
+            ),
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":status": "authorized",
+                ":validation_result": "form_found",
+                ":authorization_found": True,
+                ":matched_submission_id": submission_id,
+                ":completed_at": completed_at,
+                ":last_attempt_at": completed_at,
+                ":gsi1pk": "STATUS#authorized",
+                ":gsi1sk": gsi1sk,
+            },
+        )
+        updated_jobs.append({"pk": pk, "sk": sk})
+
+    logger.info(
+        "Reconciled minor authorization jobs from YouForm submission %s: %s",
+        submission_id,
+        json.dumps(updated_jobs, ensure_ascii=False, default=str),
+    )
+    return {
+        "reconciled": True,
+        "updated_jobs": updated_jobs,
+        "submission_id": submission_id,
+    }
+
+
+def _store_submission(parsed_body: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
     table_name = os.getenv("SUBMISSIONS_TABLE_NAME")
     if not table_name:
         logger.warning("SUBMISSIONS_TABLE_NAME is not configured; skipping persistence.")
-        return False
+        return False, None
     item = _build_submission_item(parsed_body)
     if item is None:
         logger.info("Skipping persistence because submission_id is missing.")
-        return False
+        return False, None
     _dynamodb_table(table_name).put_item(Item=item)
     logger.info("Stored YouForm submission %s in DynamoDB table %s.", item["submission_id"], table_name)
-    return True
+    return True, item
 
 
 def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
@@ -239,8 +337,11 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         parsed_body = None
 
     stored = False
+    reconciliation: dict[str, Any] | None = None
     if isinstance(parsed_body, dict):
-        stored = _store_submission(parsed_body)
+        stored, item = _store_submission(parsed_body)
+        if stored and item is not None:
+            reconciliation = _reconcile_minor_authorization_job(item)
 
     logger.info(
         "Received YouForm webhook: %s",
@@ -250,6 +351,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "raw_body": raw_body,
                 "parsed_body": parsed_body,
                 "stored": stored,
+                "reconciliation": reconciliation,
             },
             ensure_ascii=False,
             default=str,
@@ -264,6 +366,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "ok": True,
                 "message": "YouForm webhook received.",
                 "stored": stored,
+                "reconciliation": reconciliation,
             }
         ),
     }

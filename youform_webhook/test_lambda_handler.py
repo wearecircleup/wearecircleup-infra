@@ -2,13 +2,32 @@ import lambda_handler as mod
 from urllib.error import HTTPError
 
 
-def test_store_submission_copies_signature_to_s3_and_persists_s3_reference(monkeypatch):
+def test_store_submission_copies_signature_to_s3_persists_and_reconciles_job(monkeypatch):
     saved: dict[str, object] = {}
     uploaded: dict[str, object] = {}
+    updated_jobs: list[dict[str, object]] = []
 
-    class FakeTable:
+    class FakeSubmissionsTable:
         def put_item(self, Item):
             saved["Item"] = Item
+
+    class FakeJobsTable:
+        def query(self, **kwargs):
+            assert kwargs["IndexName"] == "gsi2"
+            return {
+                "Items": [
+                    {
+                        "pk": "EVENT#1996461512126",
+                        "sk": "ATTENDEE#22793263885",
+                        "event_id": "1996461512126",
+                        "attendee_id": "22793263885",
+                        "status": "missing_form",
+                    }
+                ]
+            }
+
+        def update_item(self, **kwargs):
+            updated_jobs.append(kwargs)
 
     class FakeS3:
         def put_object(self, **kwargs):
@@ -42,20 +61,30 @@ def test_store_submission_copies_signature_to_s3_and_persists_s3_reference(monke
         "completed_at": "2026-08-03T15:32:33.000000Z",
         "answers": {
             "Nombre Completo": "Juan Mesa",
-            "¿A qué evento asiste?": "https://www.eventbrite.co/e/architecture-tickets-1996461512126",
-            "¿Qué día es el evento?": "2026-08-05",
-            "¿Con qué correo vas a realizar la inscripción?": "GoCircleUp@gmail.com",
+            "Â¿A quÃ© evento asiste?": "https://www.eventbrite.co/e/architecture-tickets-1996461512126",
+            "Â¿QuÃ© dÃ­a es el evento?": "2026-08-05",
+            "Â¿Con quÃ© correo vas a realizar la inscripciÃ³n?": "GoCircleUp@gmail.com",
             "Firma para autorizar": "https://files.youform.com/signature-9ad1e753-b04a-47bb-b222-a02febabb170.png",
         },
     }
 
     monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
     monkeypatch.setenv("SIGNATURES_BUCKET_NAME", "test-signatures")
-    monkeypatch.setattr(mod, "_dynamodb_table", lambda table_name: FakeTable())
+    monkeypatch.setenv("MINOR_AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
+
+    def fake_dynamodb_table(table_name: str):
+        if table_name == "test-table":
+            return FakeSubmissionsTable()
+        if table_name == "test-jobs":
+            return FakeJobsTable()
+        raise AssertionError(f"Unexpected table: {table_name}")
+
+    monkeypatch.setattr(mod, "_dynamodb_table", fake_dynamodb_table)
     monkeypatch.setattr(mod, "_s3_client", lambda: FakeS3())
     monkeypatch.setattr(mod, "urlopen", lambda request, timeout=20: FakeResponse(b"png-binary"))
 
-    stored = mod._store_submission(parsed_body)
+    stored, item = mod._store_submission(parsed_body)
+    reconciliation = mod._reconcile_minor_authorization_job(item)
 
     assert stored is True
     assert uploaded == {
@@ -90,12 +119,12 @@ def test_store_submission_copies_signature_to_s3_and_persists_s3_reference(monke
         "answers": [
             {"question": "Nombre Completo", "answer": "Juan Mesa"},
             {
-                "question": "¿A qué evento asiste?",
+                "question": "Â¿A quÃ© evento asiste?",
                 "answer": "https://www.eventbrite.co/e/architecture-tickets-1996461512126",
             },
-            {"question": "¿Qué día es el evento?", "answer": "2026-08-05"},
+            {"question": "Â¿QuÃ© dÃ­a es el evento?", "answer": "2026-08-05"},
             {
-                "question": "¿Con qué correo vas a realizar la inscripción?",
+                "question": "Â¿Con quÃ© correo vas a realizar la inscripciÃ³n?",
                 "answer": "GoCircleUp@gmail.com",
             },
             {
@@ -104,22 +133,49 @@ def test_store_submission_copies_signature_to_s3_and_persists_s3_reference(monke
             },
         ],
     }
+    assert reconciliation == {
+        "reconciled": True,
+        "updated_jobs": [
+            {
+                "pk": "EVENT#1996461512126",
+                "sk": "ATTENDEE#22793263885",
+            }
+        ],
+        "submission_id": "2jgxyorbkf",
+    }
+    assert updated_jobs[0]["Key"] == {
+        "pk": "EVENT#1996461512126",
+        "sk": "ATTENDEE#22793263885",
+    }
+    assert updated_jobs[0]["ExpressionAttributeValues"][":status"] == "authorized"
+    assert updated_jobs[0]["ExpressionAttributeValues"][":validation_result"] == "form_found"
+    assert updated_jobs[0]["ExpressionAttributeValues"][":authorization_found"] is True
+    assert updated_jobs[0]["ExpressionAttributeValues"][":matched_submission_id"] == "2jgxyorbkf"
+    assert updated_jobs[0]["ExpressionAttributeValues"][":gsi1pk"] == "STATUS#authorized"
 
 
 def test_store_submission_skips_without_submission_id(monkeypatch):
     monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
 
-    stored = mod._store_submission({"answers": {"Nombre Completo": "Juan"}})
+    stored, item = mod._store_submission({"answers": {"Nombre Completo": "Juan"}})
 
     assert stored is False
+    assert item is None
 
 
-def test_store_submission_keeps_original_signature_url_when_copy_fails(monkeypatch):
+def test_store_submission_keeps_original_signature_url_when_copy_fails_and_no_job_matches(monkeypatch):
     saved: dict[str, object] = {}
 
-    class FakeTable:
+    class FakeSubmissionsTable:
         def put_item(self, Item):
             saved["Item"] = Item
+
+    class FakeJobsTable:
+        def query(self, **kwargs):
+            return {"Items": []}
+
+        def update_item(self, **kwargs):
+            raise AssertionError("update_item should not be called when no job matches")
 
     parsed_body = {
         "submission_id": "2jgxyorbkf",
@@ -130,16 +186,25 @@ def test_store_submission_keeps_original_signature_url_when_copy_fails(monkeypat
         "started_at": "2026-08-03T14:30:02.000000Z",
         "completed_at": "2026-08-03T15:32:33.000000Z",
         "answers": {
-            "¿A qué evento asiste?": "https://www.eventbrite.co/e/architecture-tickets-1996461512126",
-            "¿Qué día es el evento?": "2026-08-05",
-            "¿Con qué correo vas a realizar la inscripción?": "GoCircleUp@gmail.com",
+            "Â¿A quÃ© evento asiste?": "https://www.eventbrite.co/e/architecture-tickets-1996461512126",
+            "Â¿QuÃ© dÃ­a es el evento?": "2026-08-05",
+            "Â¿Con quÃ© correo vas a realizar la inscripciÃ³n?": "GoCircleUp@gmail.com",
             "Firma para autorizar": "https://files.youform.com/signature-9ad1e753-b04a-47bb-b222-a02febabb170.png",
         },
     }
 
     monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
     monkeypatch.setenv("SIGNATURES_BUCKET_NAME", "test-signatures")
-    monkeypatch.setattr(mod, "_dynamodb_table", lambda table_name: FakeTable())
+    monkeypatch.setenv("MINOR_AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
+
+    def fake_dynamodb_table(table_name: str):
+        if table_name == "test-table":
+            return FakeSubmissionsTable()
+        if table_name == "test-jobs":
+            return FakeJobsTable()
+        raise AssertionError(f"Unexpected table: {table_name}")
+
+    monkeypatch.setattr(mod, "_dynamodb_table", fake_dynamodb_table)
 
     def fail_download(_: str):
         raise HTTPError(
@@ -152,7 +217,8 @@ def test_store_submission_keeps_original_signature_url_when_copy_fails(monkeypat
 
     monkeypatch.setattr(mod, "_download_signature", fail_download)
 
-    stored = mod._store_submission(parsed_body)
+    stored, item = mod._store_submission(parsed_body)
+    reconciliation = mod._reconcile_minor_authorization_job(item)
 
     assert stored is True
     assert saved["Item"]["pk"] == "EVENT#1996461512126#FORM#iamr7tnj"
@@ -160,16 +226,20 @@ def test_store_submission_keeps_original_signature_url_when_copy_fails(monkeypat
     assert saved["Item"]["gsi3pk"] == "EVENT_DATE#2026-08-05"
     assert saved["Item"]["answers"] == [
         {
-            "question": "¿A qué evento asiste?",
+            "question": "Â¿A quÃ© evento asiste?",
             "answer": "https://www.eventbrite.co/e/architecture-tickets-1996461512126",
         },
-        {"question": "¿Qué día es el evento?", "answer": "2026-08-05"},
+        {"question": "Â¿QuÃ© dÃ­a es el evento?", "answer": "2026-08-05"},
         {
-            "question": "¿Con qué correo vas a realizar la inscripción?",
+            "question": "Â¿Con quÃ© correo vas a realizar la inscripciÃ³n?",
             "answer": "GoCircleUp@gmail.com",
         },
         {
             "question": "Firma para autorizar",
             "answer": "https://files.youform.com/signature-9ad1e753-b04a-47bb-b222-a02febabb170.png",
-        }
+        },
     ]
+    assert reconciliation == {
+        "reconciled": False,
+        "reason": "no_matching_job",
+    }

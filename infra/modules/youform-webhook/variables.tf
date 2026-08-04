@@ -47,3 +47,13 @@ variable "submissions_table_name" {
   description = "DynamoDB table name used to store normalized YouForm submissions."
   type        = string
 }
+
+variable "minor_authorization_jobs_table_arn" {
+  description = "DynamoDB table ARN used to reconcile minor authorization jobs."
+  type        = string
+}
+
+variable "minor_authorization_jobs_table_name" {
+  description = "DynamoDB table name used to reconcile minor authorization jobs."
+  type        = string
+}

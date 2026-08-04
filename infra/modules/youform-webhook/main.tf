@@ -32,10 +32,14 @@ resource "aws_iam_role_policy" "dynamodb" {
       {
         Effect = "Allow"
         Action = [
-          "dynamodb:PutItem"
+          "dynamodb:PutItem",
+          "dynamodb:Query",
+          "dynamodb:UpdateItem"
         ]
         Resource = [
-          var.submissions_table_arn
+          var.submissions_table_arn,
+          var.minor_authorization_jobs_table_arn,
+          "${var.minor_authorization_jobs_table_arn}/index/*"
         ]
       }
     ]
@@ -82,8 +86,9 @@ resource "aws_lambda_function" "this" {
 
   environment {
     variables = {
-      SUBMISSIONS_TABLE_NAME = var.submissions_table_name
-      SIGNATURES_BUCKET_NAME = var.signatures_bucket_name
+      SUBMISSIONS_TABLE_NAME              = var.submissions_table_name
+      SIGNATURES_BUCKET_NAME              = var.signatures_bucket_name
+      MINOR_AUTHORIZATION_JOBS_TABLE_NAME = var.minor_authorization_jobs_table_name
     }
   }
 
