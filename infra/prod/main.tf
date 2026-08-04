@@ -14,6 +14,13 @@ module "secretsmanager_eventbrite" {
   common_tags = local.common_tags
 }
 
+module "ses_domain_identity" {
+  source = "../modules/ses-domain-identity"
+
+  domain      = local.ses_domain
+  common_tags = local.common_tags
+}
+
 module "eventbrite_api" {
   source = "../modules/eventbrite-api"
 

@@ -6,6 +6,7 @@ locals {
   state_bucket_name                    = "wearecircleup-terraform-state-311923415472-us-east-1"
   validation_bucket_name               = "wearecircleup-terraform-check-311923415472-us-east-1"
   eventbrite_secret_name               = "wearecircleup/prod/eventbrite"
+  ses_domain                           = "circleup.com.co"
   eventbrite_api_name                  = "wearecircleup-prod-eventbrite-api"
   eventbrite_api_lambda                = "wearecircleup-prod-eventbrite-api"
   eventbrite_api_role                  = "wearecircleup-prod-eventbrite-api-role"

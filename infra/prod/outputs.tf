@@ -28,6 +28,21 @@ output "eventbrite_secret_name" {
   value       = module.secretsmanager_eventbrite.secret_name
 }
 
+output "ses_domain_identity_arn" {
+  description = "SES domain identity ARN."
+  value       = module.ses_domain_identity.identity_arn
+}
+
+output "ses_domain_verification_record" {
+  description = "DNS TXT record to copy into Hostinger for SES domain verification."
+  value       = module.ses_domain_identity.verification_record
+}
+
+output "ses_domain_dkim_records" {
+  description = "DNS CNAME records to copy into Hostinger for SES DKIM."
+  value       = module.ses_domain_identity.dkim_records
+}
+
 output "eventbrite_api_endpoint" {
   description = "HTTP API endpoint for the Eventbrite API."
   value       = module.eventbrite_api.api_endpoint
