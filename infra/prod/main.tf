@@ -118,17 +118,19 @@ module "minor_authorization_validator" {
 module "minor_authorization_reminder" {
   source = "../modules/minor-authorization-reminder"
 
-  common_tags                  = local.common_tags
-  jobs_table_arn               = module.minor_authorization_jobs_dynamodb.table_arn
-  jobs_table_name              = module.minor_authorization_jobs_dynamodb.table_name
-  lambda_function_name         = local.minor_authorization_reminder_lambda
-  lambda_package_path          = abspath("${path.root}/../artifacts/minor-authorization-reminder/minor_authorization_reminder_lambda.zip")
-  lambda_role_name             = local.minor_authorization_reminder_role
-  minor_authorization_form_url = local.minor_authorization_reminder_form
-  reminder_from_email          = local.minor_authorization_reminder_sender
-  reminder_reply_to_email      = local.minor_authorization_reminder_sender
-  schedule_expression          = "cron(0 17 * * ? *)"
-  schedule_name                = local.minor_authorization_reminder_rule
+  common_tags                             = local.common_tags
+  eventbrite_order_submissions_table_arn  = module.eventbrite_order_submissions_dynamodb.table_arn
+  eventbrite_order_submissions_table_name = module.eventbrite_order_submissions_dynamodb.table_name
+  jobs_table_arn                          = module.minor_authorization_jobs_dynamodb.table_arn
+  jobs_table_name                         = module.minor_authorization_jobs_dynamodb.table_name
+  lambda_function_name                    = local.minor_authorization_reminder_lambda
+  lambda_package_path                     = abspath("${path.root}/../artifacts/minor-authorization-reminder/minor_authorization_reminder_lambda.zip")
+  lambda_role_name                        = local.minor_authorization_reminder_role
+  minor_authorization_form_url            = local.minor_authorization_reminder_form
+  reminder_from_email                     = local.minor_authorization_reminder_sender
+  reminder_reply_to_email                 = local.minor_authorization_reminder_sender
+  schedule_expression                     = "cron(0 17 * * ? *)"
+  schedule_name                           = local.minor_authorization_reminder_rule
 }
 
 moved {

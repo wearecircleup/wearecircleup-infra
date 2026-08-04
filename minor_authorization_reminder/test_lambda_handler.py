@@ -13,6 +13,8 @@ def test_handler_sends_reminder_and_updates_job(monkeypatch):
                     {
                         "pk": "EVENT#1996475418721",
                         "sk": "ATTENDEE#22793113508",
+                        "order_id": "15414161473",
+                        "order_status": "placed",
                         "event_name": "Architecture",
                         "event_date": "2026-08-05",
                         "event_time": "10:30:00",
@@ -29,6 +31,10 @@ def test_handler_sends_reminder_and_updates_job(monkeypatch):
         def update_item(self, **kwargs):
             updates.append(kwargs)
 
+    class FakeOrdersTable:
+        def get_item(self, Key):
+            return {"Item": {"order_status": "placed"}}
+
     class FakeSesClient:
         def send_email(self, **kwargs):
             sent_emails.append(kwargs)
@@ -39,8 +45,10 @@ def test_handler_sends_reminder_and_updates_job(monkeypatch):
     monkeypatch.setenv("REMINDER_REPLY_TO_EMAIL", "hola@circleup.com.co")
     monkeypatch.setenv("MINOR_AUTHORIZATION_FORM_URL", "https://app.youform.com/forms/iamr7tnj")
     monkeypatch.setattr(mod, "_jobs_table", lambda: FakeTable())
+    monkeypatch.setattr(mod, "_order_submissions_table", lambda: FakeOrdersTable())
     monkeypatch.setattr(mod, "_ses_client", lambda: FakeSesClient())
     monkeypatch.setattr(mod, "_utc_now", lambda: "2026-08-04T17:00:00Z")
+    monkeypatch.setattr(mod, "_event_has_passed", lambda item: False)
 
     result = mod.handler({}, None)
 
@@ -53,6 +61,7 @@ def test_handler_sends_reminder_and_updates_job(monkeypatch):
             "status": "sent",
             "recipient": "buyer@example.com",
             "message_id": "ses-msg-123",
+            "order_status": "placed",
         }
     ]
     assert sent_emails[0]["FromEmailAddress"] == "hola@circleup.com.co"
@@ -65,6 +74,7 @@ def test_handler_sends_reminder_and_updates_job(monkeypatch):
     assert updates[0]["ExpressionAttributeValues"][":last_reminder_status"] == "sent"
     assert updates[0]["ExpressionAttributeValues"][":last_reminder_message_id"] == "ses-msg-123"
     assert updates[0]["ExpressionAttributeValues"][":last_reminder_error"] is None
+    assert updates[0]["ExpressionAttributeValues"][":order_status"] == "placed"
 
 
 def test_handler_marks_missing_email_without_sending(monkeypatch):
@@ -78,6 +88,8 @@ def test_handler_marks_missing_email_without_sending(monkeypatch):
                     {
                         "pk": "EVENT#1",
                         "sk": "ATTENDEE#1",
+                        "order_id": "15414161474",
+                        "order_status": "placed",
                         "event_name": "Event",
                     }
                 ]
@@ -85,6 +97,10 @@ def test_handler_marks_missing_email_without_sending(monkeypatch):
 
         def update_item(self, **kwargs):
             updates.append(kwargs)
+
+    class FakeOrdersTable:
+        def get_item(self, Key):
+            return {"Item": {"order_status": "placed"}}
 
     class FakeSesClient:
         def send_email(self, **kwargs):
@@ -94,8 +110,10 @@ def test_handler_marks_missing_email_without_sending(monkeypatch):
     monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
     monkeypatch.setenv("REMINDER_FROM_EMAIL", "hola@circleup.com.co")
     monkeypatch.setattr(mod, "_jobs_table", lambda: FakeTable())
+    monkeypatch.setattr(mod, "_order_submissions_table", lambda: FakeOrdersTable())
     monkeypatch.setattr(mod, "_ses_client", lambda: FakeSesClient())
     monkeypatch.setattr(mod, "_utc_now", lambda: "2026-08-04T17:00:00Z")
+    monkeypatch.setattr(mod, "_event_has_passed", lambda item: False)
 
     result = mod.handler({}, None)
 
@@ -114,6 +132,8 @@ def test_handler_marks_failure_when_ses_raises(monkeypatch):
                     {
                         "pk": "EVENT#1",
                         "sk": "ATTENDEE#1",
+                        "order_id": "15414161475",
+                        "order_status": "placed",
                         "buyer_email": "buyer@example.com",
                     }
                 ]
@@ -122,6 +142,10 @@ def test_handler_marks_failure_when_ses_raises(monkeypatch):
         def update_item(self, **kwargs):
             updates.append(kwargs)
 
+    class FakeOrdersTable:
+        def get_item(self, Key):
+            return {"Item": {"order_status": "placed"}}
+
     class FakeSesClient:
         def send_email(self, **kwargs):
             raise RuntimeError("ses unavailable")
@@ -129,8 +153,10 @@ def test_handler_marks_failure_when_ses_raises(monkeypatch):
     monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
     monkeypatch.setenv("REMINDER_FROM_EMAIL", "hola@circleup.com.co")
     monkeypatch.setattr(mod, "_jobs_table", lambda: FakeTable())
+    monkeypatch.setattr(mod, "_order_submissions_table", lambda: FakeOrdersTable())
     monkeypatch.setattr(mod, "_ses_client", lambda: FakeSesClient())
     monkeypatch.setattr(mod, "_utc_now", lambda: "2026-08-04T17:00:00Z")
+    monkeypatch.setattr(mod, "_event_has_passed", lambda item: False)
 
     result = mod.handler({}, None)
 
@@ -138,3 +164,113 @@ def test_handler_marks_failure_when_ses_raises(monkeypatch):
     assert result["processed"][0]["error"] == "ses unavailable"
     assert updates[0]["ExpressionAttributeValues"][":last_reminder_status"] == "failed"
     assert updates[0]["ExpressionAttributeValues"][":last_reminder_error"] == "ses unavailable"
+
+
+def test_handler_skips_cancelled_order(monkeypatch):
+    updates: list[dict[str, object]] = []
+    sent_emails: list[dict[str, object]] = []
+
+    class FakeTable:
+        def query(self, **kwargs):
+            return {
+                "Items": [
+                    {
+                        "pk": "EVENT#1",
+                        "sk": "ATTENDEE#1",
+                        "event_id": "1",
+                        "attendee_id": "1",
+                        "order_id": "123",
+                        "order_status": "placed",
+                        "buyer_email": "buyer@example.com",
+                    }
+                ]
+            }
+
+        def update_item(self, **kwargs):
+            updates.append(kwargs)
+
+    class FakeOrdersTable:
+        def get_item(self, Key):
+            return {"Item": {"order_status": "cancelled"}}
+
+    class FakeSesClient:
+        def send_email(self, **kwargs):
+            sent_emails.append(kwargs)
+            return {"MessageId": "should-not-send"}
+
+    monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
+    monkeypatch.setattr(mod, "_jobs_table", lambda: FakeTable())
+    monkeypatch.setattr(mod, "_order_submissions_table", lambda: FakeOrdersTable())
+    monkeypatch.setattr(mod, "_ses_client", lambda: FakeSesClient())
+    monkeypatch.setattr(mod, "_utc_now", lambda: "2026-08-04T17:00:00Z")
+
+    result = mod.handler({}, None)
+
+    assert result["processed"] == [
+        {
+            "pk": "EVENT#1",
+            "sk": "ATTENDEE#1",
+            "status": "skipped_order_not_placed",
+            "order_status": "cancelled",
+        }
+    ]
+    assert sent_emails == []
+    assert updates[0]["ExpressionAttributeValues"][":status_override"] == "closed_order"
+    assert updates[0]["ExpressionAttributeValues"][":validation_result_override"] == "order_not_placed"
+    assert updates[0]["ExpressionAttributeValues"][":order_status"] == "cancelled"
+
+
+def test_handler_skips_past_event(monkeypatch):
+    updates: list[dict[str, object]] = []
+    sent_emails: list[dict[str, object]] = []
+
+    class FakeTable:
+        def query(self, **kwargs):
+            return {
+                "Items": [
+                    {
+                        "pk": "EVENT#1",
+                        "sk": "ATTENDEE#1",
+                        "event_id": "1",
+                        "attendee_id": "1",
+                        "order_id": "123",
+                        "event_date": "2026-08-01",
+                        "event_time": "10:30:00",
+                        "event_timezone": "America/Bogota",
+                        "buyer_email": "buyer@example.com",
+                    }
+                ]
+            }
+
+        def update_item(self, **kwargs):
+            updates.append(kwargs)
+
+    class FakeOrdersTable:
+        def get_item(self, Key):
+            return {"Item": {"order_status": "placed"}}
+
+    class FakeSesClient:
+        def send_email(self, **kwargs):
+            sent_emails.append(kwargs)
+            return {"MessageId": "should-not-send"}
+
+    monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
+    monkeypatch.setattr(mod, "_jobs_table", lambda: FakeTable())
+    monkeypatch.setattr(mod, "_order_submissions_table", lambda: FakeOrdersTable())
+    monkeypatch.setattr(mod, "_ses_client", lambda: FakeSesClient())
+    monkeypatch.setattr(mod, "_utc_now", lambda: "2026-08-04T17:00:00Z")
+    monkeypatch.setattr(mod, "_event_has_passed", lambda item: True)
+
+    result = mod.handler({}, None)
+
+    assert result["processed"] == [
+        {
+            "pk": "EVENT#1",
+            "sk": "ATTENDEE#1",
+            "status": "skipped_event_passed",
+            "order_status": "placed",
+        }
+    ]
+    assert sent_emails == []
+    assert updates[0]["ExpressionAttributeValues"][":status_override"] == "event_passed"
+    assert updates[0]["ExpressionAttributeValues"][":validation_result_override"] == "event_passed"

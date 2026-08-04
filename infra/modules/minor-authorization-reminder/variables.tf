@@ -13,6 +13,16 @@ variable "jobs_table_name" {
   type        = string
 }
 
+variable "eventbrite_order_submissions_table_arn" {
+  description = "DynamoDB table ARN storing normalized Eventbrite order submissions."
+  type        = string
+}
+
+variable "eventbrite_order_submissions_table_name" {
+  description = "DynamoDB table name storing normalized Eventbrite order submissions."
+  type        = string
+}
+
 variable "lambda_function_name" {
   description = "Lambda function name."
   type        = string

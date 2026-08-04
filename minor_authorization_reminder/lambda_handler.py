@@ -3,6 +3,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -23,6 +24,14 @@ def _jobs_table():
 def _ses_client():
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     return boto3.client("sesv2", region_name=region)
+
+
+def _order_submissions_table():
+    region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+    table_name = os.getenv("EVENTBRITE_ORDER_SUBMISSIONS_TABLE_NAME")
+    if not table_name:
+        raise RuntimeError("EVENTBRITE_ORDER_SUBMISSIONS_TABLE_NAME is not configured.")
+    return boto3.resource("dynamodb", region_name=region).Table(table_name)
 
 
 def _utc_now() -> str:
@@ -55,6 +64,40 @@ def _recipient_email(item: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _event_has_passed(item: dict[str, Any]) -> bool:
+    event_date = item.get("event_date")
+    if not event_date:
+        return False
+
+    event_time = item.get("event_time") or "00:00:00"
+    event_timezone = item.get("event_timezone") or "UTC"
+    try:
+        event_dt = datetime.fromisoformat(f"{event_date}T{event_time}").replace(
+            tzinfo=ZoneInfo(str(event_timezone))
+        )
+    except Exception:
+        logger.warning(
+            "Could not parse event datetime for reminder job %s / %s",
+            item.get("pk"),
+            item.get("sk"),
+        )
+        return False
+    return datetime.now(ZoneInfo(str(event_timezone))) >= event_dt
+
+
+def _refresh_order_details(item: dict[str, Any]) -> dict[str, Any]:
+    order_id = item.get("order_id")
+    if not order_id:
+        return {}
+    response = _order_submissions_table().get_item(
+        Key={
+            "pk": f"ORDER#{order_id}",
+            "sk": f"ORDER#{order_id}",
+        }
+    )
+    return response.get("Item") or {}
 
 
 def _event_details_lines(item: dict[str, Any]) -> list[str]:
@@ -148,7 +191,14 @@ def _send_reminder(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _mark_reminder_result(item: dict[str, Any], result: dict[str, Any], error_detail: str | None = None) -> None:
+def _mark_reminder_result(
+    item: dict[str, Any],
+    result: dict[str, Any],
+    error_detail: str | None = None,
+    status_override: str | None = None,
+    validation_result_override: str | None = None,
+    refreshed_order_status: str | None = None,
+) -> None:
     now = _utc_now()
     expression_values: dict[str, Any] = {
         ":last_reminder_at": now,
@@ -157,16 +207,31 @@ def _mark_reminder_result(item: dict[str, Any], result: dict[str, Any], error_de
         ":zero": 0,
         ":last_reminder_message_id": result.get("message_id"),
         ":last_reminder_error": error_detail,
+        ":order_status": refreshed_order_status,
+        ":status_override": status_override,
+        ":validation_result_override": validation_result_override,
     }
+    update_expression = (
+        "SET last_reminder_at = :last_reminder_at, "
+        "last_reminder_status = :last_reminder_status, "
+        "last_reminder_message_id = :last_reminder_message_id, "
+        "last_reminder_error = :last_reminder_error, "
+        "reminder_count = if_not_exists(reminder_count, :zero) + :one"
+    )
+    if refreshed_order_status is not None:
+        update_expression += ", order_status = :order_status"
+    if status_override is not None:
+        expression_values[":gsi1pk"] = f"STATUS#{status_override}"
+        expression_values[":gsi1sk"] = (
+            f"UPDATED_AT#{now}#EVENT#{item.get('event_id') or 'UNKNOWN_EVENT'}#ATTENDEE#{item.get('attendee_id') or 'UNKNOWN_ATTENDEE'}"
+        )
+        update_expression += ", #status = :status_override, gsi1pk = :gsi1pk, gsi1sk = :gsi1sk"
+    if validation_result_override is not None:
+        update_expression += ", validation_result = :validation_result_override"
     _jobs_table().update_item(
         Key={"pk": item["pk"], "sk": item["sk"]},
-        UpdateExpression=(
-            "SET last_reminder_at = :last_reminder_at, "
-            "last_reminder_status = :last_reminder_status, "
-            "last_reminder_message_id = :last_reminder_message_id, "
-            "last_reminder_error = :last_reminder_error, "
-            "reminder_count = if_not_exists(reminder_count, :zero) + :one"
-        ),
+        UpdateExpression=update_expression,
+        ExpressionAttributeNames={"#status": "status"},
         ExpressionAttributeValues=expression_values,
     )
 
@@ -177,8 +242,48 @@ def handler(_event: dict[str, Any], _context: Any) -> dict[str, Any]:
 
     for item in jobs:
         try:
+            latest_order = _refresh_order_details(item)
+            latest_order_status = latest_order.get("order_status") or item.get("order_status")
+            if latest_order_status != "placed":
+                skip_result = {"status": "skipped_order_not_placed", "message_id": None}
+                _mark_reminder_result(
+                    item,
+                    skip_result,
+                    status_override="closed_order",
+                    validation_result_override="order_not_placed",
+                    refreshed_order_status=latest_order_status,
+                )
+                processed.append(
+                    {
+                        "pk": item["pk"],
+                        "sk": item["sk"],
+                        "status": "skipped_order_not_placed",
+                        "order_status": latest_order_status,
+                    }
+                )
+                continue
+
+            if _event_has_passed(item):
+                skip_result = {"status": "skipped_event_passed", "message_id": None}
+                _mark_reminder_result(
+                    item,
+                    skip_result,
+                    status_override="event_passed",
+                    validation_result_override="event_passed",
+                    refreshed_order_status=latest_order_status,
+                )
+                processed.append(
+                    {
+                        "pk": item["pk"],
+                        "sk": item["sk"],
+                        "status": "skipped_event_passed",
+                        "order_status": latest_order_status,
+                    }
+                )
+                continue
+
             send_result = _send_reminder(item)
-            _mark_reminder_result(item, send_result)
+            _mark_reminder_result(item, send_result, refreshed_order_status=latest_order_status)
             processed.append(
                 {
                     "pk": item["pk"],
@@ -186,6 +291,7 @@ def handler(_event: dict[str, Any], _context: Any) -> dict[str, Any]:
                     "status": send_result["status"],
                     "recipient": send_result.get("recipient"),
                     "message_id": send_result.get("message_id"),
+                    "order_status": latest_order_status,
                 }
             )
         except Exception as exc:
