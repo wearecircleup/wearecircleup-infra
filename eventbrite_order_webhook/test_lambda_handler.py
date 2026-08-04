@@ -34,6 +34,27 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
                 "last_name": "CircleUp",
                 "email": "gocircleup@gmail.com",
             }
+        if url == f"https://www.eventbriteapi.com/v3/events/{event_id}/":
+            return {
+                "id": event_id,
+                "name": {"text": "Architecture"},
+                "venue_id": "700001",
+                "start": {
+                    "local": "2026-08-05T10:30:00",
+                    "timezone": "America/Bogota",
+                },
+            }
+        if url == "https://www.eventbriteapi.com/v3/venues/700001/":
+            return {
+                "id": "700001",
+                "name": "Casa Centro",
+                "address": {
+                    "localized_address_display": "Cra 10 # 12-30, Bogota, Colombia",
+                    "city": "Bogota",
+                    "region": "Cundinamarca",
+                    "country": "CO",
+                },
+            }
         if url == f"https://www.eventbriteapi.com/v3/orders/{order_id}/attendees/?page=1":
             return {
                 "attendees": [
@@ -99,6 +120,8 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
     }
     assert requested_urls == [
         api_url,
+        f"https://www.eventbriteapi.com/v3/events/{event_id}/",
+        "https://www.eventbriteapi.com/v3/venues/700001/",
         f"https://www.eventbriteapi.com/v3/orders/{order_id}/attendees/?page=1",
     ]
     assert sent_messages == [
@@ -118,6 +141,16 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
         "entity_type": "eventbrite_order",
         "order_id": order_id,
         "event_id": event_id,
+        "event_name": "Architecture",
+        "event_date": "2026-08-05",
+        "event_time": "10:30:00",
+        "event_timezone": "America/Bogota",
+        "venue_id": "700001",
+        "venue_name": "Casa Centro",
+        "venue_address": "Cra 10 # 12-30, Bogota, Colombia",
+        "venue_city": "Bogota",
+        "venue_region": "Cundinamarca",
+        "venue_country": "CO",
         "order_status": "placed",
         "order_created": "2026-08-03T15:23:52Z",
         "order_changed": "2026-08-03T15:24:04Z",
@@ -221,6 +254,27 @@ def test_store_order_submission_does_not_enqueue_when_no_minor_is_detected(monke
                 "first_name": "Adult",
                 "last_name": "Person",
                 "email": "adult@example.com",
+            }
+        if url == f"https://www.eventbriteapi.com/v3/events/{event_id}/":
+            return {
+                "id": event_id,
+                "name": {"text": "Astronomy"},
+                "venue_id": "700002",
+                "start": {
+                    "local": "2026-08-06T18:45:00",
+                    "timezone": "America/Bogota",
+                },
+            }
+        if url == "https://www.eventbriteapi.com/v3/venues/700002/":
+            return {
+                "id": "700002",
+                "name": "Observatorio",
+                "address": {
+                    "localized_address_display": "Calle 1 # 2-3, Bogota, Colombia",
+                    "city": "Bogota",
+                    "region": "Cundinamarca",
+                    "country": "CO",
+                },
             }
         if url == f"https://www.eventbriteapi.com/v3/orders/{order_id}/attendees/?page=1":
             return {

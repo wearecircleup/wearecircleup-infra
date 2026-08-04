@@ -162,19 +162,51 @@ def _fetch_all_order_attendees(order_id: str, token: str) -> list[dict[str, Any]
         page += 1
 
 
+def _fetch_event(event_id: str, token: str) -> dict[str, Any]:
+    base_url = os.getenv("EVENTBRITE_API_BASE_URL", "https://www.eventbriteapi.com/v3").rstrip("/")
+    return _request_json(f"{base_url}/events/{event_id}/", token)
+
+
+def _fetch_venue(venue_id: str, token: str) -> dict[str, Any]:
+    base_url = os.getenv("EVENTBRITE_API_BASE_URL", "https://www.eventbriteapi.com/v3").rstrip("/")
+    return _request_json(f"{base_url}/venues/{venue_id}/", token)
+
+
+def _event_datetime_parts(event: dict[str, Any]) -> tuple[str | None, str | None]:
+    start_local = ((event.get("start") or {}).get("local")) or ""
+    if "T" not in start_local:
+        return None, None
+    event_date, event_time = start_local.split("T", 1)
+    return event_date or None, event_time or None
+
+
 def _build_submission_item(
     webhook_payload: dict[str, Any],
     order: dict[str, Any],
+    event_details: dict[str, Any],
+    venue_details: dict[str, Any],
     attendees: list[dict[str, Any]],
     received_at: str,
 ) -> dict[str, Any]:
     order_id = str(order["id"])
+    event_date, event_time = _event_datetime_parts(event_details)
+    venue_address = venue_details.get("address") or {}
     return {
         "pk": f"ORDER#{order_id}",
         "sk": f"ORDER#{order_id}",
         "entity_type": "eventbrite_order",
         "order_id": order_id,
         "event_id": order.get("event_id"),
+        "event_name": _clean_text(((event_details.get("name") or {}).get("text"))),
+        "event_date": event_date,
+        "event_time": event_time,
+        "event_timezone": ((event_details.get("start") or {}).get("timezone")),
+        "venue_id": event_details.get("venue_id"),
+        "venue_name": _clean_text(venue_details.get("name")),
+        "venue_address": _clean_text(venue_address.get("localized_address_display")),
+        "venue_city": _clean_text(venue_address.get("city")),
+        "venue_region": _clean_text(venue_address.get("region")),
+        "venue_country": _clean_text(venue_address.get("country")),
         "order_status": order.get("status"),
         "order_created": order.get("created"),
         "order_changed": order.get("changed"),
@@ -316,6 +348,29 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
         },
     )
     _log_json("Eventbrite raw order payload", order)
+    event_id = order.get("event_id")
+    event_details = _fetch_event(str(event_id), token) if event_id else {}
+    _log_json(
+        "Eventbrite event fetched from order event_id",
+        {
+            "event_id": event_id,
+            "event_name": _clean_text(((event_details.get("name") or {}).get("text"))),
+            "event_start_local": ((event_details.get("start") or {}).get("local")),
+            "event_timezone": ((event_details.get("start") or {}).get("timezone")),
+            "venue_id": event_details.get("venue_id"),
+        },
+    )
+    venue_id = event_details.get("venue_id")
+    venue_details = _fetch_venue(str(venue_id), token) if venue_id else {}
+    _log_json(
+        "Eventbrite venue fetched from event venue_id",
+        {
+            "event_id": event_id,
+            "venue_id": venue_id,
+            "venue_name": _clean_text(venue_details.get("name")),
+            "venue_address": _clean_text(((venue_details.get("address") or {}).get("localized_address_display"))),
+        },
+    )
     attendees = _fetch_all_order_attendees(order_id, token)
     _log_json(
         "Eventbrite raw order attendees payload",
@@ -329,7 +384,7 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
         (request_context or {}).get("time")
         or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     )
-    item = _build_submission_item(webhook_payload, order, attendees, received_at)
+    item = _build_submission_item(webhook_payload, order, event_details, venue_details, attendees, received_at)
     _dynamodb_table(table_name).put_item(Item=item)
     enqueued_jobs = _enqueue_minor_authorization_jobs(item, request_context)
     _log_json(
