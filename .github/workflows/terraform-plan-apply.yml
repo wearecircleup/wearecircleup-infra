@@ -8,6 +8,7 @@ on:
       - "infra/**"
       - "eventbrite_api/**"
       - "eventbrite_order_webhook/**"
+      - "minor_authorization_reminder/**"
       - "minor_authorization_validator/**"
       - ".github/workflows/terraform-plan-apply.yml"
       - ".github/workflows/terraform-destroy.yml"
@@ -79,6 +80,10 @@ jobs:
       - name: Build minor_authorization_validator Lambda package
         working-directory: .
         run: bash ./infra/scripts/build-minor-authorization-validator-package.sh
+
+      - name: Build minor_authorization_reminder Lambda package
+        working-directory: .
+        run: bash ./infra/scripts/build-minor-authorization-reminder-package.sh
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
