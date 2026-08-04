@@ -128,7 +128,10 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
         {
             "QueueUrl": "https://sqs.us-east-1.amazonaws.com/123/minor-auth",
             "MessageBody": (
-                '{"event_id": "1996456922398", "order_id": "15413130193", "attendee_id": "22792951476", '
+                '{"event_id": "1996456922398", "event_name": "Architecture", "event_date": "2026-08-05", '
+                '"event_time": "10:30:00", "event_timezone": "America/Bogota", "venue_name": "Casa Centro", '
+                '"venue_city": "Bogota", "venue_region": "Cundinamarca", "order_id": "15413130193", '
+                '"order_created": "2026-08-03T15:23:52Z", "order_status": "placed", "attendee_id": "22792951476", '
                 '"attendee_email": "gocircleup@gmail.com", "buyer_email": "gocircleup@gmail.com", '
                 '"age_range": "14 a 17 años", "detected_at": "03/Aug/2026:15:24:46 +0000", '
                 '"request_id": null, "source": "eventbrite_order_webhook"}'

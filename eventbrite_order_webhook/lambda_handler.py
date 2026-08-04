@@ -256,7 +256,16 @@ def _build_minor_authorization_jobs(
         jobs.append(
             {
                 "event_id": item.get("event_id"),
+                "event_name": item.get("event_name"),
+                "event_date": item.get("event_date"),
+                "event_time": item.get("event_time"),
+                "event_timezone": item.get("event_timezone"),
+                "venue_name": item.get("venue_name"),
+                "venue_city": item.get("venue_city"),
+                "venue_region": item.get("venue_region"),
                 "order_id": item.get("order_id"),
+                "order_created": item.get("order_created"),
+                "order_status": item.get("order_status"),
                 "attendee_id": attendee.get("attendee_id"),
                 "attendee_email": attendee_email,
                 "buyer_email": buyer_email,

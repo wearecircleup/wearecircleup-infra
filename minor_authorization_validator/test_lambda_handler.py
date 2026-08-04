@@ -40,7 +40,11 @@ def test_handler_marks_job_as_authorized_when_youform_submission_exists(monkeypa
             "Records": [
                 {
                     "body": (
-                        '{"event_id": "1996475418721", "order_id": "15414161473", '
+                        '{"event_id": "1996475418721", "event_name": "Architecture", '
+                        '"event_date": "2026-08-05", "event_time": "10:30:00", '
+                        '"event_timezone": "America/Bogota", "venue_name": "Casa Centro", '
+                        '"venue_city": "Bogota", "venue_region": "Cundinamarca", "order_id": "15414161473", '
+                        '"order_created": "2026-08-03T15:23:52Z", "order_status": "placed", '
                         '"attendee_id": "22793113508", "attendee_email": "Minor@example.com", '
                         '"buyer_email": "buyer@example.com", "age_range": "14 a 17 aÃ±os", '
                         '"detected_at": "2026-08-03T18:19:14Z", "request_id": "req-1", '
@@ -69,7 +73,16 @@ def test_handler_marks_job_as_authorized_when_youform_submission_exists(monkeypa
         "sk": "ATTENDEE#22793113508",
         "entity_type": "minor_authorization_validation",
         "event_id": "1996475418721",
+        "event_name": "Architecture",
+        "event_date": "2026-08-05",
+        "event_time": "10:30:00",
+        "event_timezone": "America/Bogota",
+        "venue_name": "Casa Centro",
+        "venue_city": "Bogota",
+        "venue_region": "Cundinamarca",
         "order_id": "15414161473",
+        "order_created": "2026-08-03T15:23:52Z",
+        "order_status": "placed",
         "attendee_id": "22793113508",
         "attendee_email": "Minor@example.com",
         "buyer_email": "buyer@example.com",
