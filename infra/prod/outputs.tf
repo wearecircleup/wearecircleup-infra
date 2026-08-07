@@ -18,6 +18,16 @@ output "validation_bucket_name" {
   value       = module.s3_validation.bucket_name
 }
 
+output "public_assets_bucket_name" {
+  description = "Public S3 bucket name for Circle Up assets."
+  value       = module.public_assets_s3.bucket_name
+}
+
+output "public_assets_base_url" {
+  description = "Base URL for public Circle Up assets."
+  value       = module.public_assets_s3.base_url
+}
+
 output "eventbrite_secret_arn" {
   description = "AWS Secrets Manager secret ARN for Eventbrite."
   value       = module.secretsmanager_eventbrite.secret_arn

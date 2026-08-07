@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import re
+import unicodedata
 from datetime import datetime, timezone
 from html import escape
 from typing import Any
@@ -190,11 +192,36 @@ def _support_url() -> str:
     return os.getenv("REMINDER_SUPPORT_URL", "https://circleup.com.co")
 
 
+def _slugify_event_name(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    ascii_only = normalized.encode("ascii", "ignore").decode("ascii")
+    ascii_only = ascii_only.lower()
+    ascii_only = re.sub(r"[^a-z0-9]+", "-", ascii_only)
+    return ascii_only.strip("-")
+
+
+def _build_eventbrite_event_url(item: dict[str, Any]) -> str | None:
+    existing_url = item.get("event_url")
+    if isinstance(existing_url, str) and existing_url.strip():
+        return existing_url.strip()
+
+    event_id = item.get("event_id")
+    event_name = item.get("event_name")
+    if not event_id or not isinstance(event_name, str) or not event_name.strip():
+        return None
+
+    slug = _slugify_event_name(event_name)
+    if not slug:
+        return None
+    return f"https://www.eventbrite.co/e/{slug}-tickets-{event_id}"
+
+
 def _build_form_url(item: dict[str, Any]) -> str:
     base_url = os.getenv("MINOR_AUTHORIZATION_FORM_URL", "https://app.youform.com/forms/iamr7tnj")
     params: dict[str, str] = {}
-    if item.get("event_url"):
-        params["event_url"] = str(item["event_url"])
+    event_url = _build_eventbrite_event_url(item)
+    if event_url:
+        params["event_url"] = event_url
     if item.get("event_date"):
         params["event_date"] = str(item["event_date"])
     if not params:

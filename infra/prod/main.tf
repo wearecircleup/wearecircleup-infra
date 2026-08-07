@@ -7,6 +7,13 @@ module "s3_validation" {
   common_tags = local.common_tags
 }
 
+module "public_assets_s3" {
+  source = "../modules/public-assets-s3"
+
+  bucket_name = local.public_assets_bucket_name
+  common_tags = local.common_tags
+}
+
 module "secretsmanager_eventbrite" {
   source = "../modules/secretsmanager-eventbrite"
 

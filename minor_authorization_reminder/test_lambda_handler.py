@@ -279,3 +279,20 @@ def test_handler_skips_past_event(monkeypatch):
     assert sent_emails == []
     assert updates[0]["ExpressionAttributeValues"][":status_override"] == "event_passed"
     assert updates[0]["ExpressionAttributeValues"][":validation_result_override"] == "event_passed"
+
+
+def test_build_form_url_falls_back_to_generated_eventbrite_url(monkeypatch):
+    monkeypatch.setenv("MINOR_AUTHORIZATION_FORM_URL", "https://app.youform.com/forms/iamr7tnj")
+
+    form_url = mod._build_form_url(
+        {
+            "event_id": "1996633294933",
+            "event_name": "Ardillas Ñandú: Física y Café",
+            "event_date": "2026-08-07",
+        }
+    )
+
+    assert (
+        form_url
+        == "https://app.youform.com/forms/iamr7tnj?event_url=https%3A%2F%2Fwww.eventbrite.co%2Fe%2Fardillas-nandu-fisica-y-cafe-tickets-1996633294933&event_date=2026-08-07"
+    )
