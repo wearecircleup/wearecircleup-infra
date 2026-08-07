@@ -54,6 +54,12 @@ variable "reminder_from_email" {
   type        = string
 }
 
+variable "reminder_hero_image_url" {
+  description = "Public image URL rendered at the top of reminder emails."
+  type        = string
+  default     = ""
+}
+
 variable "reminder_reply_to_email" {
   description = "Reply-to email used for reminders."
   type        = string

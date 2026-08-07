@@ -135,6 +135,7 @@ module "minor_authorization_reminder" {
   lambda_package_path                     = abspath("${path.root}/../artifacts/minor-authorization-reminder/minor_authorization_reminder_lambda.zip")
   lambda_role_name                        = local.minor_authorization_reminder_role
   minor_authorization_form_url            = local.minor_authorization_reminder_form
+  reminder_hero_image_url                 = local.minor_authorization_reminder_hero
   reminder_from_email                     = local.minor_authorization_reminder_sender
   reminder_reply_to_email                 = local.minor_authorization_reminder_sender
   schedule_expression                     = "cron(0 17 * * ? *)"

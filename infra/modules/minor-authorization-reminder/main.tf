@@ -89,6 +89,7 @@ resource "aws_lambda_function" "this" {
       EVENTBRITE_ORDER_SUBMISSIONS_TABLE_NAME = var.eventbrite_order_submissions_table_name
       MINOR_AUTHORIZATION_FORM_URL            = var.minor_authorization_form_url
       REMINDER_FROM_EMAIL                     = var.reminder_from_email
+      REMINDER_HERO_IMAGE_URL                 = var.reminder_hero_image_url
       REMINDER_REPLY_TO_EMAIL                 = var.reminder_reply_to_email
       REMINDER_EMAIL_SUBJECT_PREFIX           = var.reminder_subject_prefix
     }

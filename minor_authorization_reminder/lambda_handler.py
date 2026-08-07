@@ -192,6 +192,13 @@ def _support_url() -> str:
     return os.getenv("REMINDER_SUPPORT_URL", "https://circleup.com.co")
 
 
+def _hero_image_url() -> str | None:
+    value = os.getenv("REMINDER_HERO_IMAGE_URL")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
 def _slugify_event_name(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     ascii_only = normalized.encode("ascii", "ignore").decode("ascii")
@@ -237,6 +244,7 @@ def _build_email(item: dict[str, Any]) -> tuple[str, str, str]:
     subject = f"{subject_prefix}: {event_name}"
     support_email = _support_email()
     support_url = _support_url()
+    hero_image_url = _hero_image_url()
 
     detail_text = _event_summary_text(item)
 
@@ -268,6 +276,17 @@ def _build_email(item: dict[str, Any]) -> tuple[str, str, str]:
         "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background-color: #f7f7f4; padding: 40px 20px;\">"
         "<tr><td align=\"center\">"
         "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width: 760px; background-color: #ffffff;\">"
+        "<tr>"
+    )
+    if hero_image_url:
+        html_body += (
+            "<tr>"
+            "<td style=\"padding: 0;\">"
+            f'<img src="{escape(hero_image_url, quote=True)}" alt="Circle Up Community" width="760" style="display: block; width: 100%; max-width: 760px; height: auto; border: 0; outline: none; text-decoration: none;">'
+            "</td>"
+            "</tr>"
+        )
+    html_body += (
         "<tr>"
         "<td style=\"padding: 40px 40px 44px;\">"
         "<div style=\"margin: 0 0 16px; color: #7d95ad; font-size: 12px; line-height: 18px; text-transform: uppercase; letter-spacing: 0.12em;\">Circle Up Community</div>"

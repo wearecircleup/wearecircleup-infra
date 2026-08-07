@@ -22,6 +22,7 @@ locals {
   minor_authorization_reminder_rule    = "wearecircleup-prod-minor-authorization-reminder-daily"
   minor_authorization_reminder_sender  = "Circle Up Autorizacion <hola@circleup.com.co>"
   minor_authorization_reminder_form    = "https://app.youform.com/forms/iamr7tnj"
+  minor_authorization_reminder_hero    = "https://wearecircleup-prod-public-assets-311923415472-us-east-1.s3.us-east-1.amazonaws.com/email-assets/circleupemail.png"
   minor_authorization_validator_lambda = "wearecircleup-prod-minor-authorization-validator"
   minor_authorization_validator_role   = "wearecircleup-prod-minor-authorization-validator-role"
   minor_authorization_validation_queue = "wearecircleup-prod-minor-authorization-validation"
