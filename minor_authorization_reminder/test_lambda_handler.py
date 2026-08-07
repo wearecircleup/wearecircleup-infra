@@ -42,7 +42,7 @@ def test_handler_sends_reminder_and_updates_job(monkeypatch):
             return {"MessageId": "ses-msg-123"}
 
     monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
-    monkeypatch.setenv("REMINDER_FROM_EMAIL", "hola@circleup.com.co")
+    monkeypatch.setenv("REMINDER_FROM_EMAIL", "Circle Up Autorizacion <hola@circleup.com.co>")
     monkeypatch.setenv("REMINDER_REPLY_TO_EMAIL", "hola@circleup.com.co")
     monkeypatch.setenv("MINOR_AUTHORIZATION_FORM_URL", "https://app.youform.com/forms/iamr7tnj")
     monkeypatch.setattr(mod, "_jobs_table", lambda: FakeTable())
@@ -65,7 +65,7 @@ def test_handler_sends_reminder_and_updates_job(monkeypatch):
             "order_status": "placed",
         }
     ]
-    assert sent_emails[0]["FromEmailAddress"] == "hola@circleup.com.co"
+    assert sent_emails[0]["FromEmailAddress"] == "Circle Up Autorizacion <hola@circleup.com.co>"
     assert sent_emails[0]["Destination"] == {"ToAddresses": ["buyer@example.com"]}
     assert "Architecture" in sent_emails[0]["Content"]["Simple"]["Subject"]["Data"]
     assert "Completar formulario" in sent_emails[0]["Content"]["Simple"]["Body"]["Html"]["Data"]
@@ -113,7 +113,7 @@ def test_handler_marks_missing_email_without_sending(monkeypatch):
             return {"MessageId": "should-not-send"}
 
     monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
-    monkeypatch.setenv("REMINDER_FROM_EMAIL", "hola@circleup.com.co")
+    monkeypatch.setenv("REMINDER_FROM_EMAIL", "Circle Up Autorizacion <hola@circleup.com.co>")
     monkeypatch.setattr(mod, "_jobs_table", lambda: FakeTable())
     monkeypatch.setattr(mod, "_order_submissions_table", lambda: FakeOrdersTable())
     monkeypatch.setattr(mod, "_ses_client", lambda: FakeSesClient())
@@ -156,7 +156,7 @@ def test_handler_marks_failure_when_ses_raises(monkeypatch):
             raise RuntimeError("ses unavailable")
 
     monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
-    monkeypatch.setenv("REMINDER_FROM_EMAIL", "hola@circleup.com.co")
+    monkeypatch.setenv("REMINDER_FROM_EMAIL", "Circle Up Autorizacion <hola@circleup.com.co>")
     monkeypatch.setattr(mod, "_jobs_table", lambda: FakeTable())
     monkeypatch.setattr(mod, "_order_submissions_table", lambda: FakeOrdersTable())
     monkeypatch.setattr(mod, "_ses_client", lambda: FakeSesClient())
