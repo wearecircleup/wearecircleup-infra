@@ -325,6 +325,7 @@ def _mark_reminder_result(
     refreshed_order_status: str | None = None,
 ) -> None:
     now = _utc_now()
+    expression_attribute_names: dict[str, str] | None = None
     expression_values: dict[str, Any] = {
         ":last_reminder_at": now,
         ":last_reminder_status": result["status"],
@@ -346,6 +347,7 @@ def _mark_reminder_result(
     if refreshed_order_status is not None:
         update_expression += ", order_status = :order_status"
     if status_override is not None:
+        expression_attribute_names = {"#status": "status"}
         expression_values[":gsi1pk"] = f"STATUS#{status_override}"
         expression_values[":gsi1sk"] = (
             f"UPDATED_AT#{now}#EVENT#{item.get('event_id') or 'UNKNOWN_EVENT'}#ATTENDEE#{item.get('attendee_id') or 'UNKNOWN_ATTENDEE'}"
@@ -353,12 +355,14 @@ def _mark_reminder_result(
         update_expression += ", #status = :status_override, gsi1pk = :gsi1pk, gsi1sk = :gsi1sk"
     if validation_result_override is not None:
         update_expression += ", validation_result = :validation_result_override"
-    _jobs_table().update_item(
-        Key={"pk": item["pk"], "sk": item["sk"]},
-        UpdateExpression=update_expression,
-        ExpressionAttributeNames={"#status": "status"},
-        ExpressionAttributeValues=expression_values,
-    )
+    update_kwargs = {
+        "Key": {"pk": item["pk"], "sk": item["sk"]},
+        "UpdateExpression": update_expression,
+        "ExpressionAttributeValues": expression_values,
+    }
+    if expression_attribute_names is not None:
+        update_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+    _jobs_table().update_item(**update_kwargs)
 
 
 def handler(_event: dict[str, Any], _context: Any) -> dict[str, Any]:
