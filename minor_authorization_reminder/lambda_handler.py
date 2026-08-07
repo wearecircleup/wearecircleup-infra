@@ -275,20 +275,11 @@ def _build_email(item: dict[str, Any]) -> tuple[str, str, str]:
         "<body style=\"margin: 0; padding: 0; background-color: #f7f7f4; font-family: Arial, Helvetica, sans-serif; color: #153f69;\">"
         "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background-color: #f7f7f4; padding: 40px 20px;\">"
         "<tr><td align=\"center\">"
-        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width: 760px; background-color: #ffffff;\">"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width: 980px; background-color: #ffffff;\">"
         "<tr>"
     )
-    if hero_image_url:
-        html_body += (
-            "<tr>"
-            "<td style=\"padding: 0;\">"
-            f'<img src="{escape(hero_image_url, quote=True)}" alt="Circle Up Community" width="760" style="display: block; width: 100%; max-width: 760px; height: auto; border: 0; outline: none; text-decoration: none;">'
-            "</td>"
-            "</tr>"
-        )
     html_body += (
-        "<tr>"
-        "<td style=\"padding: 40px 40px 44px;\">"
+        "<td style=\"width: 58%; vertical-align: top; padding: 40px 40px 44px;\">"
         "<div style=\"margin: 0 0 16px; color: #7d95ad; font-size: 12px; line-height: 18px; text-transform: uppercase; letter-spacing: 0.12em;\">Circle Up Community</div>"
         "<h1 style=\"margin: 0 0 18px; font-size: 42px; line-height: 1.06; font-weight: 500; color: #0f4978;\">Tu autorizacion sigue pendiente</h1>"
         f"<p style=\"margin: 0 0 26px; font-size: 16px; line-height: 1.75; color: #5e7f9c; max-width: 620px;\">{escape(detail_text or 'Te escribimos porque todavia nos falta un paso importante para el check-in si quieres participar siendo menor de edad.')}</p>"
@@ -323,7 +314,14 @@ def _build_email(item: dict[str, Any]) -> tuple[str, str, str]:
         "<div style=\"margin: 0 0 4px; color: #7d95ad; font-size: 12px; line-height: 18px; text-transform: uppercase; letter-spacing: 0.12em;\">Circle Up Community</div>"
         '<div style="font-size: 12px; line-height: 18px; color: #0f4978;">circleup.com.co</div>'
         "</div>"
-        "</td></tr></table></td></tr></table></body></html>"
+        "</td>"
+    )
+    if hero_image_url:
+        html_body += (
+            f'<td style="width: 42%; vertical-align: top; padding: 0;"><img src="{escape(hero_image_url, quote=True)}" alt="Circle Up Community" width="412" style="display: block; width: 100%; max-width: 412px; height: auto; border: 0; outline: none; text-decoration: none;"></td>'
+        )
+    html_body += (
+        "</tr></table></td></tr></table></body></html>"
     )
 
     return subject, text_body, html_body
@@ -379,9 +377,6 @@ def _mark_reminder_result(
         ":zero": 0,
         ":last_reminder_message_id": result.get("message_id"),
         ":last_reminder_error": error_detail,
-        ":order_status": refreshed_order_status,
-        ":status_override": status_override,
-        ":validation_result_override": validation_result_override,
     }
     update_expression = (
         "SET last_reminder_at = :last_reminder_at, "
@@ -402,15 +397,18 @@ def _mark_reminder_result(
             ", reminder_history = list_append(if_not_exists(reminder_history, :empty_list), :reminder_history_entry)"
         )
     if refreshed_order_status is not None:
+        expression_values[":order_status"] = refreshed_order_status
         update_expression += ", order_status = :order_status"
     if status_override is not None:
         expression_attribute_names = {"#status": "status"}
+        expression_values[":status_override"] = status_override
         expression_values[":gsi1pk"] = f"STATUS#{status_override}"
         expression_values[":gsi1sk"] = (
             f"UPDATED_AT#{now}#EVENT#{item.get('event_id') or 'UNKNOWN_EVENT'}#ATTENDEE#{item.get('attendee_id') or 'UNKNOWN_ATTENDEE'}"
         )
         update_expression += ", #status = :status_override, gsi1pk = :gsi1pk, gsi1sk = :gsi1sk"
     if validation_result_override is not None:
+        expression_values[":validation_result_override"] = validation_result_override
         update_expression += ", validation_result = :validation_result_override"
     update_kwargs = {
         "Key": {"pk": item["pk"], "sk": item["sk"]},
