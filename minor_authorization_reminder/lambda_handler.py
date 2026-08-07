@@ -245,6 +245,7 @@ def _build_email(item: dict[str, Any]) -> tuple[str, str, str]:
     support_email = _support_email()
     support_url = _support_url()
     hero_image_url = _hero_image_url()
+    details_colspan = "2" if hero_image_url else "1"
 
     detail_text = _event_summary_text(item)
 
@@ -272,16 +273,30 @@ def _build_email(item: dict[str, Any]) -> tuple[str, str, str]:
 
     html_body = (
         "<html>"
+        "<head>"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+        "<style>"
+        "@media screen and (max-width: 720px) {"
+        "  .reminder-shell { width: 100% !important; }"
+        "  .stack-col { display: block !important; width: 100% !important; }"
+        "  .content-col { padding: 32px 24px 24px !important; }"
+        "  .details-col { padding: 24px !important; }"
+        "  .hero-cell { padding: 0 !important; }"
+        "  .hero-image { width: 100% !important; max-width: 100% !important; height: auto !important; }"
+        "  .title-text { font-size: 34px !important; line-height: 1.1 !important; }"
+        "}"
+        "</style>"
+        "</head>"
         "<body style=\"margin: 0; padding: 0; background-color: #f7f7f4; font-family: Arial, Helvetica, sans-serif; color: #153f69;\">"
         "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background-color: #f7f7f4; padding: 40px 20px;\">"
         "<tr><td align=\"center\">"
-        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width: 980px; background-color: #ffffff;\">"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" class=\"reminder-shell\" style=\"max-width: 980px; background-color: #ffffff;\">"
         "<tr>"
     )
     html_body += (
-        "<td style=\"width: 58%; vertical-align: top; padding: 40px 40px 44px;\">"
+        "<td class=\"stack-col content-col\" style=\"width: 58%; vertical-align: top; padding: 40px 40px 36px;\">"
         "<div style=\"margin: 0 0 16px; color: #7d95ad; font-size: 12px; line-height: 18px; text-transform: uppercase; letter-spacing: 0.12em;\">Circle Up Community</div>"
-        "<h1 style=\"margin: 0 0 18px; font-size: 42px; line-height: 1.06; font-weight: 500; color: #0f4978;\">Tu autorizacion sigue pendiente</h1>"
+        "<h1 class=\"title-text\" style=\"margin: 0 0 18px; font-size: 42px; line-height: 1.06; font-weight: 500; color: #0f4978;\">Tu autorizacion sigue pendiente</h1>"
         f"<p style=\"margin: 0 0 26px; font-size: 16px; line-height: 1.75; color: #5e7f9c; max-width: 620px;\">{escape(detail_text or 'Te escribimos porque todavia nos falta un paso importante para el check-in si quieres participar siendo menor de edad.')}</p>"
     )
     html_body += (
@@ -294,9 +309,17 @@ def _build_email(item: dict[str, Any]) -> tuple[str, str, str]:
         "Completar formulario"
         "</a>"
         "</p>"
+        "</td>"
     )
+    if hero_image_url:
+        html_body += (
+            f'<td class="stack-col hero-cell" style="width: 42%; vertical-align: top; padding: 0;"><img class="hero-image" src="{escape(hero_image_url, quote=True)}" alt="Circle Up Community" width="412" style="display: block; width: 100%; max-width: 412px; height: auto; border: 0; outline: none; text-decoration: none;"></td>'
+        )
     html_body += (
-        "<div style=\"margin: 4px 0 0; font-size: 12px; line-height: 1.7; color: #88a0b6; max-width: 620px;\">"
+        "</tr>"
+        "<tr>"
+        f"<td class=\"details-col\" colspan=\"{details_colspan}\" style=\"padding: 0 40px 40px;\">"
+        "<div style=\"margin: 4px 0 0; font-size: 12px; line-height: 1.7; color: #88a0b6; max-width: 100%;\">"
         "<p style=\"margin: 0 0 10px; font-size: 12px; line-height: 1.7; color: #88a0b6;\">"
         "Este formulario es un requisito para poder hacer check-in el dia del evento. Si quieres, puedes completarlo con calma, "
         "pero idealmente al menos 3 horas antes de que empiece, antes de que el sistema saque la lista final de participantes."
@@ -315,13 +338,8 @@ def _build_email(item: dict[str, Any]) -> tuple[str, str, str]:
         '<div style="font-size: 12px; line-height: 18px; color: #0f4978;">circleup.com.co</div>'
         "</div>"
         "</td>"
-    )
-    if hero_image_url:
-        html_body += (
-            f'<td style="width: 42%; vertical-align: top; padding: 0;"><img src="{escape(hero_image_url, quote=True)}" alt="Circle Up Community" width="412" style="display: block; width: 100%; max-width: 412px; height: auto; border: 0; outline: none; text-decoration: none;"></td>'
-        )
-    html_body += (
-        "</tr></table></td></tr></table></body></html>"
+        "</tr>"
+        "</table></td></tr></table></body></html>"
     )
 
     return subject, text_body, html_body
