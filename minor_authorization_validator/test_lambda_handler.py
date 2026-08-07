@@ -41,6 +41,7 @@ def test_handler_marks_job_as_authorized_when_youform_submission_exists(monkeypa
                 {
                     "body": (
                         '{"event_id": "1996475418721", "event_name": "Architecture", '
+                        '"event_url": "https://www.eventbrite.co/e/architecture-tickets-1996475418721", '
                         '"event_date": "2026-08-05", "event_time": "10:30:00", '
                         '"event_timezone": "America/Bogota", "venue_name": "Casa Centro", '
                         '"venue_city": "Bogota", "venue_region": "Cundinamarca", "order_id": "15414161473", '
@@ -74,6 +75,7 @@ def test_handler_marks_job_as_authorized_when_youform_submission_exists(monkeypa
         "entity_type": "minor_authorization_validation",
         "event_id": "1996475418721",
         "event_name": "Architecture",
+        "event_url": "https://www.eventbrite.co/e/architecture-tickets-1996475418721",
         "event_date": "2026-08-05",
         "event_time": "10:30:00",
         "event_timezone": "America/Bogota",

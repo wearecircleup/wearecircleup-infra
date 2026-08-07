@@ -23,5 +23,6 @@ __pycache__/
 eventbrite_api/.env
 eventbrite_api/.env.local
 eventbrite_api/.preview/
+minor_authorization_reminder/.preview/
 
 infra/artifacts/

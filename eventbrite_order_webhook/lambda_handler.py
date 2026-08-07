@@ -198,6 +198,7 @@ def _build_submission_item(
         "order_id": order_id,
         "event_id": order.get("event_id"),
         "event_name": _clean_text(((event_details.get("name") or {}).get("text"))),
+        "event_url": event_details.get("url"),
         "event_date": event_date,
         "event_time": event_time,
         "event_timezone": ((event_details.get("start") or {}).get("timezone")),
@@ -257,6 +258,7 @@ def _build_minor_authorization_jobs(
             {
                 "event_id": item.get("event_id"),
                 "event_name": item.get("event_name"),
+                "event_url": item.get("event_url"),
                 "event_date": item.get("event_date"),
                 "event_time": item.get("event_time"),
                 "event_timezone": item.get("event_timezone"),
@@ -364,6 +366,7 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
         {
             "event_id": event_id,
             "event_name": _clean_text(((event_details.get("name") or {}).get("text"))),
+            "event_url": event_details.get("url"),
             "event_start_local": ((event_details.get("start") or {}).get("local")),
             "event_timezone": ((event_details.get("start") or {}).get("timezone")),
             "venue_id": event_details.get("venue_id"),

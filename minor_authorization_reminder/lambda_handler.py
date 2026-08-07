@@ -2,7 +2,9 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from html import escape
 from typing import Any
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 import boto3
@@ -118,41 +120,164 @@ def _event_details_lines(item: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _event_summary_text(item: dict[str, Any]) -> str | None:
+    event_name = item.get("event_name")
+    event_date = item.get("event_date")
+    event_time = item.get("event_time")
+    event_timezone = item.get("event_timezone")
+    venue_parts = [item.get("venue_name"), item.get("venue_city"), item.get("venue_region")]
+    venue_parts = [str(part) for part in venue_parts if part]
+
+    when_text = None
+    if event_date:
+        try:
+            event_date_obj = datetime.fromisoformat(str(event_date)).date()
+            months = {
+                1: "enero",
+                2: "febrero",
+                3: "marzo",
+                4: "abril",
+                5: "mayo",
+                6: "junio",
+                7: "julio",
+                8: "agosto",
+                9: "septiembre",
+                10: "octubre",
+                11: "noviembre",
+                12: "diciembre",
+            }
+            when_text = f"{event_date_obj.day} de {months[event_date_obj.month]} de {event_date_obj.year}"
+        except ValueError:
+            when_text = str(event_date)
+
+    time_text = None
+    if event_time:
+        time_text = str(event_time)[:5]
+
+    schedule_parts: list[str] = []
+    if when_text:
+        schedule_parts.append(when_text)
+    if time_text:
+        schedule_parts.append(f"a las {time_text}")
+    if event_timezone:
+        schedule_parts.append(f"({event_timezone})")
+
+    schedule_text = " ".join(schedule_parts).strip()
+    venue_text = ", ".join(venue_parts)
+
+    if not any([event_name, schedule_text, venue_text]):
+        return None
+
+    summary = (
+        "Te escribimos porque todavia nos falta un paso importante para el check-in si quieres participar siendo menor de edad: "
+        "necesitas la autorizacion de tu representante legal"
+    )
+    if schedule_text:
+        summary += f" para el {schedule_text}"
+    if venue_text:
+        summary += f" en {venue_text}"
+    summary += "."
+    if event_name:
+        summary += f" Te estaremos esperando en {event_name}, tu participacion es importante."
+    return summary
+
+
+def _support_email() -> str:
+    return os.getenv("REMINDER_SUPPORT_EMAIL", "hola@circleup.com.co")
+
+
+def _support_url() -> str:
+    return os.getenv("REMINDER_SUPPORT_URL", "https://circleup.com.co")
+
+
+def _build_form_url(item: dict[str, Any]) -> str:
+    base_url = os.getenv("MINOR_AUTHORIZATION_FORM_URL", "https://app.youform.com/forms/iamr7tnj")
+    params: dict[str, str] = {}
+    if item.get("event_url"):
+        params["event_url"] = str(item["event_url"])
+    if item.get("event_date"):
+        params["event_date"] = str(item["event_date"])
+    if not params:
+        return base_url
+    separator = "&" if "?" in base_url else "?"
+    return f"{base_url}{separator}{urlencode(params)}"
+
+
 def _build_email(item: dict[str, Any]) -> tuple[str, str, str]:
-    form_url = os.getenv("MINOR_AUTHORIZATION_FORM_URL", "https://app.youform.com/forms/iamr7tnj")
-    subject_prefix = os.getenv("REMINDER_EMAIL_SUBJECT_PREFIX", "Pendiente autorización para menor de edad")
+    form_url = _build_form_url(item)
+    subject_prefix = os.getenv("REMINDER_EMAIL_SUBJECT_PREFIX", "Pendiente autorizacion para menor de edad")
     event_name = item.get("event_name") or item.get("event_id") or "tu evento"
     subject = f"{subject_prefix}: {event_name}"
+    support_email = _support_email()
+    support_url = _support_url()
 
-    details = _event_details_lines(item)
-    detail_text = "\n".join(details)
-    detail_html = "".join(f"<li>{line}</li>" for line in details)
+    detail_text = _event_summary_text(item)
 
     text_body = (
         "Hola,\n\n"
-        "Vemos que la autorización para menor de edad sigue pendiente. Para mantener la inscripción activa, "
-        f"por favor diligencia el formulario cuanto antes:\n{form_url}\n\n"
+        f"{detail_text or 'Te escribimos porque todavia nos falta un paso importante para el check-in si quieres participar siendo menor de edad.'}"
     )
     if detail_text:
-        text_body += f"{detail_text}\n\n"
+        text_body += "\n\n"
+    else:
+        text_body += "\n\n"
     text_body += (
-        "Si el formulario no se completa a tiempo, la inscripción podría verse afectada.\n\n"
-        "Gracias,\nCircle Up Community"
+        "Cuando quieras, puedes completar este formulario:\n"
+        f"{form_url}\n\n"
+    )
+    text_body += (
+        "Es un requisito para poder hacer check-in el dia del evento. Idealmente, dejalo listo al menos 3 horas antes de que empiece, "
+        "antes de que el sistema saque la lista final de participantes.\n\n"
+        "Si ya no vas a participar, puedes cancelar tu orden desde el correo de Eventbrite, en la seccion de tickets. "
+        "Mientras la orden siga activa, este recordatorio puede volver a llegar diariamente.\n\n"
+        "Si ya diligenciaste el formulario y aun recibes este mensaje, normalmente significa que el correo usado en Eventbrite "
+        f"y el correo usado en el formulario no coinciden. En ese caso, escribenos a {support_email}.\n\n"
+        f"Circle Up Community\ncircleup.com.co"
     )
 
     html_body = (
-        "<html><body>"
-        "<p>Hola,</p>"
-        "<p>Vemos que la autorización para menor de edad sigue pendiente. "
-        "Para mantener la inscripción activa, por favor diligencia el formulario cuanto antes:</p>"
-        f'<p><a href="{form_url}">{form_url}</a></p>'
+        "<html>"
+        "<body style=\"margin: 0; padding: 0; background-color: #f7f7f4; font-family: Arial, Helvetica, sans-serif; color: #153f69;\">"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background-color: #f7f7f4; padding: 40px 20px;\">"
+        "<tr><td align=\"center\">"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width: 760px; background-color: #ffffff;\">"
+        "<tr>"
+        "<td style=\"padding: 40px 40px 44px;\">"
+        "<div style=\"margin: 0 0 16px; color: #7d95ad; font-size: 12px; line-height: 18px; text-transform: uppercase; letter-spacing: 0.12em;\">Circle Up Community</div>"
+        "<h1 style=\"margin: 0 0 18px; font-size: 42px; line-height: 1.06; font-weight: 500; color: #0f4978;\">Tu autorizacion sigue pendiente</h1>"
+        f"<p style=\"margin: 0 0 26px; font-size: 16px; line-height: 1.75; color: #5e7f9c; max-width: 620px;\">{escape(detail_text or 'Te escribimos porque todavia nos falta un paso importante para el check-in si quieres participar siendo menor de edad.')}</p>"
     )
-    if detail_html:
-        html_body += f"<ul>{detail_html}</ul>"
     html_body += (
-        "<p>Si el formulario no se completa a tiempo, la inscripción podría verse afectada.</p>"
-        "<p>Gracias,<br>Circle Up Community</p>"
-        "</body></html>"
+        "<p style=\"margin: 0 0 26px; font-size: 16px; line-height: 1.75; color: #5e7f9c; max-width: 620px;\">"
+        "Cuando quieras, puedes completar el formulario en este enlace."
+        "</p>"
+        "<p style=\"margin: 0 0 30px;\">"
+        f'<a href="{escape(form_url, quote=True)}" '
+        'style="display: inline-block; padding: 16px 28px; background-color: #4da3f5; color: #ffffff; text-decoration: none; border-radius: 0; font-size: 16px; font-weight: 700;">'
+        "Completar formulario"
+        "</a>"
+        "</p>"
+    )
+    html_body += (
+        "<div style=\"margin: 4px 0 0; font-size: 12px; line-height: 1.7; color: #88a0b6; max-width: 620px;\">"
+        "<p style=\"margin: 0 0 10px; font-size: 12px; line-height: 1.7; color: #88a0b6;\">"
+        "Este formulario es un requisito para poder hacer check-in el dia del evento. Si quieres, puedes completarlo con calma, "
+        "pero idealmente al menos 3 horas antes de que empiece, antes de que el sistema saque la lista final de participantes."
+        "</p>"
+        "<p style=\"margin: 0 0 10px; font-size: 12px; line-height: 1.7; color: #88a0b6;\">"
+        "Si ya no vas a participar, puedes cancelar tu orden desde el correo de Eventbrite, en la seccion de tickets. "
+        "Mientras la orden siga activa, este recordatorio puede volver a llegar diariamente."
+        "</p>"
+        "<p style=\"margin: 0 0 18px; font-size: 12px; line-height: 1.7; color: #88a0b6;\">"
+        "Si ya diligenciaste el formulario y aun recibes este mensaje, normalmente significa que el correo usado en Eventbrite "
+        f'y el correo usado en el formulario no coinciden. En ese caso, escribenos a <a href="mailto:{escape(support_email, quote=True)}" style="color: #0f4978; text-decoration: none;">{escape(support_email)}</a>.'
+        "</p>"
+        "</div>"
+        "<div style=\"padding-top: 20px; border-top: 1px solid #d7e2ec;\">"
+        "<div style=\"margin: 0 0 4px; color: #7d95ad; font-size: 12px; line-height: 18px; text-transform: uppercase; letter-spacing: 0.12em;\">Circle Up Community</div>"
+        '<div style="font-size: 12px; line-height: 18px; color: #0f4978;">circleup.com.co</div>'
+        "</div>"
+        "</td></tr></table></td></tr></table></body></html>"
     )
 
     return subject, text_body, html_body
@@ -175,10 +300,10 @@ def _send_reminder(item: dict[str, Any]) -> dict[str, Any]:
         ReplyToAddresses=[reply_to_email],
         Content={
             "Simple": {
-                "Subject": {"Data": subject},
+                "Subject": {"Data": subject, "Charset": "UTF-8"},
                 "Body": {
-                    "Text": {"Data": text_body},
-                    "Html": {"Data": html_body},
+                    "Text": {"Data": text_body, "Charset": "UTF-8"},
+                    "Html": {"Data": html_body, "Charset": "UTF-8"},
                 },
             }
         },

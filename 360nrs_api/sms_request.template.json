@@ -1,0 +1,6 @@
+{
+  "to": ["573194477860"],
+  "from": "TEST",
+  "message": "Prueba Circle Up 360nrs",
+  "notificationUrl": "https://example.com/webhooks/360nrs"
+}

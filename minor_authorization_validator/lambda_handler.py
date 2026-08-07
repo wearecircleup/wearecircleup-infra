@@ -57,6 +57,7 @@ def _build_job_item(job: dict[str, Any]) -> dict[str, Any]:
         "entity_type": "minor_authorization_validation",
         "event_id": event_id,
         "event_name": job.get("event_name"),
+        "event_url": job.get("event_url"),
         "event_date": job.get("event_date"),
         "event_time": job.get("event_time"),
         "event_timezone": job.get("event_timezone"),

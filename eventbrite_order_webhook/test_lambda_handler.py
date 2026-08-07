@@ -38,6 +38,7 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
             return {
                 "id": event_id,
                 "name": {"text": "Architecture"},
+                "url": "https://www.eventbrite.co/e/architecture-tickets-1996456922398",
                 "venue_id": "700001",
                 "start": {
                     "local": "2026-08-05T10:30:00",
@@ -128,7 +129,7 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
         {
             "QueueUrl": "https://sqs.us-east-1.amazonaws.com/123/minor-auth",
             "MessageBody": (
-                '{"event_id": "1996456922398", "event_name": "Architecture", "event_date": "2026-08-05", '
+                '{"event_id": "1996456922398", "event_name": "Architecture", "event_url": "https://www.eventbrite.co/e/architecture-tickets-1996456922398", "event_date": "2026-08-05", '
                 '"event_time": "10:30:00", "event_timezone": "America/Bogota", "venue_name": "Casa Centro", '
                 '"venue_city": "Bogota", "venue_region": "Cundinamarca", "order_id": "15413130193", '
                 '"order_created": "2026-08-03T15:23:52Z", "order_status": "placed", "attendee_id": "22792951476", '
@@ -145,6 +146,7 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
         "order_id": order_id,
         "event_id": event_id,
         "event_name": "Architecture",
+        "event_url": "https://www.eventbrite.co/e/architecture-tickets-1996456922398",
         "event_date": "2026-08-05",
         "event_time": "10:30:00",
         "event_timezone": "America/Bogota",
@@ -262,6 +264,7 @@ def test_store_order_submission_does_not_enqueue_when_no_minor_is_detected(monke
             return {
                 "id": event_id,
                 "name": {"text": "Astronomy"},
+                "url": "https://www.eventbrite.co/e/astronomy-tickets-1996456922399",
                 "venue_id": "700002",
                 "start": {
                     "local": "2026-08-06T18:45:00",

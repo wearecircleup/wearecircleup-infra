@@ -16,6 +16,7 @@ def test_handler_sends_reminder_and_updates_job(monkeypatch):
                         "order_id": "15414161473",
                         "order_status": "placed",
                         "event_name": "Architecture",
+                        "event_url": "https://www.eventbrite.co/e/ardillas-tickets-1996633294933",
                         "event_date": "2026-08-05",
                         "event_time": "10:30:00",
                         "event_timezone": "America/Bogota",
@@ -67,6 +68,10 @@ def test_handler_sends_reminder_and_updates_job(monkeypatch):
     assert sent_emails[0]["FromEmailAddress"] == "hola@circleup.com.co"
     assert sent_emails[0]["Destination"] == {"ToAddresses": ["buyer@example.com"]}
     assert "Architecture" in sent_emails[0]["Content"]["Simple"]["Subject"]["Data"]
+    assert "Completar formulario" in sent_emails[0]["Content"]["Simple"]["Body"]["Html"]["Data"]
+    assert "Te escribimos porque todavia nos falta un paso importante para el check-in si quieres participar siendo menor de edad: necesitas la autorizacion de tu representante legal para el 5 de agosto de 2026 a las 10:30 (America/Bogota) en Casa Centro, Bogota, Cundinamarca. Te estaremos esperando en Architecture, tu participacion es importante." in sent_emails[0]["Content"]["Simple"]["Body"]["Html"]["Data"]
+    assert "https://app.youform.com/forms/iamr7tnj?event_url=https%3A%2F%2Fwww.eventbrite.co%2Fe%2Fardillas-tickets-1996633294933&amp;event_date=2026-08-05" in sent_emails[0]["Content"]["Simple"]["Body"]["Html"]["Data"]
+    assert "https://app.youform.com/forms/iamr7tnj?event_url=https%3A%2F%2Fwww.eventbrite.co%2Fe%2Fardillas-tickets-1996633294933&event_date=2026-08-05" in sent_emails[0]["Content"]["Simple"]["Body"]["Text"]["Data"]
     assert updates[0]["Key"] == {
         "pk": "EVENT#1996475418721",
         "sk": "ATTENDEE#22793113508",
