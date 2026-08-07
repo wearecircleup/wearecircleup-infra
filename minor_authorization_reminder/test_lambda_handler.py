@@ -80,6 +80,12 @@ def test_handler_sends_reminder_and_updates_job(monkeypatch):
     assert updates[0]["ExpressionAttributeValues"][":last_reminder_message_id"] == "ses-msg-123"
     assert updates[0]["ExpressionAttributeValues"][":last_reminder_error"] is None
     assert updates[0]["ExpressionAttributeValues"][":order_status"] == "placed"
+    assert updates[0]["ExpressionAttributeValues"][":reminder_history_entry"] == [
+        {
+            "email": "buyer@example.com",
+            "sent_at": "2026-08-04T17:00:00Z",
+        }
+    ]
 
 
 def test_handler_marks_missing_email_without_sending(monkeypatch):

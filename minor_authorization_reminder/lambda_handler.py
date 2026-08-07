@@ -371,6 +371,17 @@ def _mark_reminder_result(
         "last_reminder_error = :last_reminder_error, "
         "reminder_count = if_not_exists(reminder_count, :zero) + :one"
     )
+    if result.get("sent") and result.get("recipient"):
+        expression_values[":empty_list"] = []
+        expression_values[":reminder_history_entry"] = [
+            {
+                "email": result["recipient"],
+                "sent_at": now,
+            }
+        ]
+        update_expression += (
+            ", reminder_history = list_append(if_not_exists(reminder_history, :empty_list), :reminder_history_entry)"
+        )
     if refreshed_order_status is not None:
         update_expression += ", order_status = :order_status"
     if status_override is not None:
