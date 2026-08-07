@@ -10,5 +10,5 @@ output "bucket_name" {
 
 output "base_url" {
   description = "Base URL for public objects stored in the bucket."
-  value       = "https://${aws_s3_bucket.this.bucket}.s3.${data.aws_region.current.id}.amazonaws.com"
+  value       = "https://${aws_s3_bucket.this.bucket}.s3.${var.aws_region}.amazonaws.com"
 }

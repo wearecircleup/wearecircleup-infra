@@ -12,6 +12,7 @@ module "public_assets_s3" {
 
   bucket_name = local.public_assets_bucket_name
   common_tags = local.common_tags
+  aws_region  = local.aws_region
 }
 
 module "secretsmanager_eventbrite" {
