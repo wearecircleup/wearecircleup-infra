@@ -283,8 +283,8 @@ def _build_email(item: dict[str, Any]) -> tuple[str, str, str]:
         "  .details-col { padding: 24px !important; }"
         "  .hero-cell { padding: 0 !important; }"
         "  .hero-image { width: 100% !important; max-width: 100% !important; height: auto !important; }"
-        "  .title-text { font-size: 32px !important; line-height: 1.12 !important; }"
-        "  .body-text { font-size: 15px !important; line-height: 1.65 !important; max-width: 100% !important; word-break: break-word !important; overflow-wrap: anywhere !important; }"
+        "  .title-text { font-size: 30px !important; line-height: 1.14 !important; }"
+        "  .body-text { font-size: 12px !important; line-height: 1.7 !important; max-width: 100% !important; word-break: break-word !important; overflow-wrap: anywhere !important; }"
         "}"
         "</style>"
         "</head>"
@@ -297,11 +297,11 @@ def _build_email(item: dict[str, Any]) -> tuple[str, str, str]:
     html_body += (
         "<td class=\"stack-col content-col\" style=\"width: 58%; vertical-align: top; padding: 32px 28px 28px;\">"
         "<div style=\"margin: 0 0 16px; color: #7d95ad; font-size: 12px; line-height: 18px; text-transform: uppercase; letter-spacing: 0.12em;\">Circle Up Community</div>"
-        "<h1 class=\"title-text\" style=\"margin: 0 0 18px; font-size: 36px; line-height: 1.08; font-weight: 500; color: #0f4978;\">Tu autorizacion sigue pendiente</h1>"
-        f"<p class=\"body-text\" style=\"margin: 0 0 26px; font-size: 14px; line-height: 1.65; color: #5e7f9c; max-width: 620px; word-break: break-word; overflow-wrap: anywhere;\">{escape(detail_text or 'Te escribimos porque todavia nos falta un paso importante para el check-in si quieres participar siendo menor de edad.')}</p>"
+        "<h1 class=\"title-text\" style=\"margin: 0 0 18px; font-size: 34px; line-height: 1.1; font-weight: 500; color: #0f4978;\">Tu autorizacion sigue pendiente</h1>"
+        f"<p class=\"body-text\" style=\"margin: 0 0 26px; font-size: 12px; line-height: 1.7; color: #5e7f9c; max-width: 620px; word-break: break-word; overflow-wrap: anywhere;\">{escape(detail_text or 'Te escribimos porque todavia nos falta un paso importante para el check-in si quieres participar siendo menor de edad.')}</p>"
     )
     html_body += (
-        "<p class=\"body-text\" style=\"margin: 0 0 24px; font-size: 14px; line-height: 1.65; color: #5e7f9c; max-width: 620px; word-break: break-word; overflow-wrap: anywhere;\">"
+        "<p class=\"body-text\" style=\"margin: 0 0 24px; font-size: 12px; line-height: 1.7; color: #5e7f9c; max-width: 620px; word-break: break-word; overflow-wrap: anywhere;\">"
         "Cuando quieras, puedes completar el formulario en este enlace."
         "</p>"
         "<p style=\"margin: 0 0 30px;\">"
