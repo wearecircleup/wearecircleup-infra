@@ -43,7 +43,7 @@ def test_handler_sends_reminder_and_updates_job(monkeypatch):
 
     monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
     monkeypatch.setenv("REMINDER_FROM_EMAIL", "Circle Up Autorizacion <hola@circleup.com.co>")
-    monkeypatch.setenv("REMINDER_HERO_IMAGE_URL", "https://assets.example.com/email-assets/circleupemail.png")
+    monkeypatch.setenv("REMINDER_HERO_IMAGE_URL", "https://assets.example.com/email-assets/logo.png")
     monkeypatch.setenv("REMINDER_REPLY_TO_EMAIL", "hola@circleup.com.co")
     monkeypatch.setenv("MINOR_AUTHORIZATION_FORM_URL", "https://app.youform.com/forms/iamr7tnj")
     monkeypatch.setattr(mod, "_jobs_table", lambda: FakeTable())
@@ -70,7 +70,7 @@ def test_handler_sends_reminder_and_updates_job(monkeypatch):
     assert sent_emails[0]["Destination"] == {"ToAddresses": ["buyer@example.com"]}
     assert "Architecture" in sent_emails[0]["Content"]["Simple"]["Subject"]["Data"]
     assert "Completar formulario" in sent_emails[0]["Content"]["Simple"]["Body"]["Html"]["Data"]
-    assert 'src="https://assets.example.com/email-assets/circleupemail.png"' in sent_emails[0]["Content"]["Simple"]["Body"]["Html"]["Data"]
+    assert 'src="https://assets.example.com/email-assets/logo.png"' in sent_emails[0]["Content"]["Simple"]["Body"]["Html"]["Data"]
     assert "Te escribimos porque todavia nos falta un paso importante para el check-in si quieres participar siendo menor de edad: necesitas la autorizacion de tu representante legal para el 5 de agosto de 2026 a las 10:30 (America/Bogota) en Casa Centro, Bogota, Cundinamarca. Te estaremos esperando en Architecture, tu participacion es importante." in sent_emails[0]["Content"]["Simple"]["Body"]["Html"]["Data"]
     assert "https://app.youform.com/forms/iamr7tnj?event_url=https%3A%2F%2Fwww.eventbrite.co%2Fe%2Fardillas-tickets-1996633294933&amp;event_date=2026-08-05" in sent_emails[0]["Content"]["Simple"]["Body"]["Html"]["Data"]
     assert "https://app.youform.com/forms/iamr7tnj?event_url=https%3A%2F%2Fwww.eventbrite.co%2Fe%2Fardillas-tickets-1996633294933&event_date=2026-08-05" in sent_emails[0]["Content"]["Simple"]["Body"]["Text"]["Data"]
