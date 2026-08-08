@@ -276,6 +276,8 @@ def _reconcile_minor_authorization_job(item: dict[str, Any]) -> dict[str, Any]:
     completed_at = item.get("completed_at")
     authorized_form_id = _authorized_minor_form_id()
 
+    # This webhook can be reused by multiple YouForm forms, but only the legal
+    # minor-authorization form is allowed to mark a validation job as authorized.
     if item.get("form_id") != authorized_form_id:
         logger.info(
             "Skipping minor authorization reconciliation because form_id %s is not the authorized minor form %s.",

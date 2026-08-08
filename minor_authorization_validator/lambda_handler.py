@@ -141,6 +141,8 @@ def _find_matching_youform_submission(job: dict[str, Any]) -> dict[str, Any] | N
     )
     items = response.get("Items") or []
     for item in items:
+        # Email + event_id is not enough once the webhook stores multiple forms in
+        # the same table; we must require the configured authorization form_id.
         if (
             item.get("form_id") == authorized_form_id
             and item.get("eventbrite_event_id") == event_id
