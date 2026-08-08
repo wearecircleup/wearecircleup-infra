@@ -11,6 +11,8 @@ from boto3.dynamodb.conditions import Key
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+_SECRET_CACHE: dict[str, dict[str, str]] = {}
+
 
 def _jobs_table():
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
@@ -26,6 +28,36 @@ def _youform_table():
     if not table_name:
         raise RuntimeError("YOUFORM_SUBMISSIONS_TABLE_NAME is not configured.")
     return boto3.resource("dynamodb", region_name=region).Table(table_name)
+
+
+def _load_secret(secret_id: str) -> dict[str, str]:
+    cached = _SECRET_CACHE.get(secret_id)
+    if cached is not None:
+        return cached
+    response = boto3.client("secretsmanager").get_secret_value(SecretId=secret_id)
+    payload = response.get("SecretString")
+    if not payload:
+        raise RuntimeError(f"Secret {secret_id} does not contain SecretString.")
+    data = json.loads(payload)
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Secret {secret_id} must contain a JSON object.")
+    secret = {str(key): str(value) for key, value in data.items() if value is not None}
+    _SECRET_CACHE[secret_id] = secret
+    return secret
+
+
+def _authorized_minor_form_id() -> str:
+    secret_id = os.getenv("EVENTBRITE_SECRET_ID")
+    if secret_id:
+        secret = _load_secret(secret_id)
+        value = (secret.get("AUTHORIZED_MINOR_FORM_ID") or "").strip()
+        if value:
+            return value
+        raise RuntimeError(f"AUTHORIZED_MINOR_FORM_ID is missing in secret {secret_id}.")
+    value = (os.getenv("AUTHORIZED_MINOR_FORM_ID") or "").strip()
+    if value:
+        return value
+    raise RuntimeError("AUTHORIZED_MINOR_FORM_ID is not configured.")
 
 
 def _utc_now() -> str:
@@ -99,6 +131,7 @@ def _job_exists(table, pk: str, sk: str) -> bool:
 def _find_matching_youform_submission(job: dict[str, Any]) -> dict[str, Any] | None:
     normalized_email = _normalized_email(job.get("attendee_email"), job.get("buyer_email"))
     event_id = str(job.get("event_id") or "").strip()
+    authorized_form_id = _authorized_minor_form_id()
     if not normalized_email or not event_id:
         return None
 
@@ -109,7 +142,8 @@ def _find_matching_youform_submission(job: dict[str, Any]) -> dict[str, Any] | N
     items = response.get("Items") or []
     for item in items:
         if (
-            item.get("eventbrite_event_id") == event_id
+            item.get("form_id") == authorized_form_id
+            and item.get("eventbrite_event_id") == event_id
             and item.get("completed_at")
             and item.get("submission_id")
         ):

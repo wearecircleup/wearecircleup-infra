@@ -92,6 +92,8 @@ module "youform_webhook" {
 
   api_name                            = local.youform_webhook_api
   common_tags                         = local.common_tags
+  eventbrite_secret_arn               = module.secretsmanager_eventbrite.secret_arn
+  eventbrite_secret_name              = module.secretsmanager_eventbrite.secret_name
   lambda_function_name                = local.youform_webhook_lambda
   lambda_package_path                 = abspath("${path.root}/../artifacts/youform-webhook/youform_webhook_lambda.zip")
   lambda_role_name                    = local.youform_webhook_role

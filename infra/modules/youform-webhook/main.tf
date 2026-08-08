@@ -66,6 +66,26 @@ resource "aws_iam_role_policy" "s3_signatures" {
   })
 }
 
+resource "aws_iam_role_policy" "secrets" {
+  name = "${var.lambda_function_name}-secrets"
+  role = aws_iam_role.lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = [
+          var.eventbrite_secret_arn
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.lambda_function_name}"
   retention_in_days = 14
@@ -89,6 +109,7 @@ resource "aws_lambda_function" "this" {
       SUBMISSIONS_TABLE_NAME              = var.submissions_table_name
       SIGNATURES_BUCKET_NAME              = var.signatures_bucket_name
       MINOR_AUTHORIZATION_JOBS_TABLE_NAME = var.minor_authorization_jobs_table_name
+      EVENTBRITE_SECRET_ID                = var.eventbrite_secret_name
     }
   }
 

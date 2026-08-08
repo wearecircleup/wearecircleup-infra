@@ -3,6 +3,16 @@ variable "api_name" {
   type        = string
 }
 
+variable "eventbrite_secret_arn" {
+  description = "Secrets Manager ARN containing shared Eventbrite and authorization values."
+  type        = string
+}
+
+variable "eventbrite_secret_name" {
+  description = "Secrets Manager name containing shared Eventbrite and authorization values."
+  type        = string
+}
+
 variable "common_tags" {
   description = "Common tags applied to resources."
   type        = map(string)

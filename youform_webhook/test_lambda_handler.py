@@ -71,6 +71,7 @@ def test_store_submission_copies_signature_to_s3_persists_and_reconciles_job(mon
     monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
     monkeypatch.setenv("SIGNATURES_BUCKET_NAME", "test-signatures")
     monkeypatch.setenv("MINOR_AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
+    monkeypatch.setenv("AUTHORIZED_MINOR_FORM_ID", "iamr7tnj")
 
     def fake_dynamodb_table(table_name: str):
         if table_name == "test-table":
@@ -196,6 +197,7 @@ def test_store_submission_keeps_original_signature_url_when_copy_fails_and_no_jo
     monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
     monkeypatch.setenv("SIGNATURES_BUCKET_NAME", "test-signatures")
     monkeypatch.setenv("MINOR_AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
+    monkeypatch.setenv("AUTHORIZED_MINOR_FORM_ID", "iamr7tnj")
 
     def fake_dynamodb_table(table_name: str):
         if table_name == "test-table":
@@ -242,4 +244,29 @@ def test_store_submission_keeps_original_signature_url_when_copy_fails_and_no_jo
     assert reconciliation == {
         "reconciled": False,
         "reason": "no_matching_job",
+    }
+
+
+def test_reconciliation_skips_non_authorized_form(monkeypatch):
+    class FakeJobsTable:
+        def query(self, **kwargs):
+            raise AssertionError("query should not be called for non-authorized forms")
+
+    monkeypatch.setenv("MINOR_AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
+    monkeypatch.setenv("AUTHORIZED_MINOR_FORM_ID", "iamr7tnj")
+    monkeypatch.setattr(mod, "_minor_authorization_jobs_table", lambda: FakeJobsTable())
+
+    reconciliation = mod._reconcile_minor_authorization_job(
+        {
+            "form_id": "another-form",
+            "eventbrite_event_id": "1996461512126",
+            "registration_email": "gocircleup@gmail.com",
+            "submission_id": "sub-1",
+            "completed_at": "2026-08-03T15:32:33.000000Z",
+        }
+    )
+
+    assert reconciliation == {
+        "reconciled": False,
+        "reason": "form_id_not_authorized",
     }

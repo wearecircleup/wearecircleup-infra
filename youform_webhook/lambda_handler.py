@@ -15,6 +15,8 @@ from boto3.dynamodb.conditions import Key
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+_SECRET_CACHE: dict[str, dict[str, str]] = {}
+
 SIGNATURE_QUESTION = "Firma para autorizar"
 EVENT_URL_QUESTION = "¿A qué evento asiste?"
 EVENT_DATE_QUESTION = "¿Qué día es el evento?"
@@ -41,6 +43,36 @@ def _normalized_question_key(value: str) -> str:
 def _dynamodb_table(table_name: str):
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     return boto3.resource("dynamodb", region_name=region).Table(table_name)
+
+
+def _load_secret(secret_id: str) -> dict[str, str]:
+    cached = _SECRET_CACHE.get(secret_id)
+    if cached is not None:
+        return cached
+    response = boto3.client("secretsmanager").get_secret_value(SecretId=secret_id)
+    payload = response.get("SecretString")
+    if not payload:
+        raise RuntimeError(f"Secret {secret_id} does not contain SecretString.")
+    data = json.loads(payload)
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Secret {secret_id} must contain a JSON object.")
+    secret = {str(key): str(value) for key, value in data.items() if value is not None}
+    _SECRET_CACHE[secret_id] = secret
+    return secret
+
+
+def _authorized_minor_form_id() -> str:
+    secret_id = os.getenv("EVENTBRITE_SECRET_ID")
+    if secret_id:
+        secret = _load_secret(secret_id)
+        value = (secret.get("AUTHORIZED_MINOR_FORM_ID") or "").strip()
+        if value:
+            return value
+        raise RuntimeError(f"AUTHORIZED_MINOR_FORM_ID is missing in secret {secret_id}.")
+    value = (os.getenv("AUTHORIZED_MINOR_FORM_ID") or "").strip()
+    if value:
+        return value
+    raise RuntimeError("AUTHORIZED_MINOR_FORM_ID is not configured.")
 
 
 def _minor_authorization_jobs_table():
@@ -242,6 +274,15 @@ def _reconcile_minor_authorization_job(item: dict[str, Any]) -> dict[str, Any]:
     registration_email = item.get("registration_email")
     submission_id = item.get("submission_id")
     completed_at = item.get("completed_at")
+    authorized_form_id = _authorized_minor_form_id()
+
+    if item.get("form_id") != authorized_form_id:
+        logger.info(
+            "Skipping minor authorization reconciliation because form_id %s is not the authorized minor form %s.",
+            item.get("form_id"),
+            authorized_form_id,
+        )
+        return {"reconciled": False, "reason": "form_id_not_authorized"}
 
     if jobs_table is None:
         logger.info("Skipping minor authorization reconciliation because MINOR_AUTHORIZATION_JOBS_TABLE_NAME is not configured.")

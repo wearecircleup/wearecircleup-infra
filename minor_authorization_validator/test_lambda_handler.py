@@ -22,6 +22,7 @@ def test_handler_marks_job_as_authorized_when_youform_submission_exists(monkeypa
                 "Items": [
                     {
                         "submission_id": "o6ro2kooc5",
+                        "form_id": "iamr7tnj",
                         "eventbrite_event_id": "1996475418721",
                         "registration_email": "minor@example.com",
                         "completed_at": "2026-08-03T18:18:00Z",
@@ -32,6 +33,7 @@ def test_handler_marks_job_as_authorized_when_youform_submission_exists(monkeypa
     monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
     monkeypatch.setenv("YOUFORM_SUBMISSIONS_TABLE_NAME", "test-youform")
     monkeypatch.setenv("AUTHORIZATION_MAX_ATTEMPTS", "5")
+    monkeypatch.setenv("AUTHORIZED_MINOR_FORM_ID", "iamr7tnj")
     monkeypatch.setattr(mod, "_jobs_table", lambda: FakeJobsTable())
     monkeypatch.setattr(mod, "_youform_table", lambda: FakeYouformTable())
 
@@ -136,6 +138,7 @@ def test_handler_marks_job_as_missing_form_when_youform_submission_does_not_exis
 
     monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
     monkeypatch.setenv("YOUFORM_SUBMISSIONS_TABLE_NAME", "test-youform")
+    monkeypatch.setenv("AUTHORIZED_MINOR_FORM_ID", "iamr7tnj")
     monkeypatch.setattr(mod, "_jobs_table", lambda: FakeJobsTable())
     monkeypatch.setattr(mod, "_youform_table", lambda: FakeYouformTable())
 
@@ -176,6 +179,7 @@ def test_handler_skips_duplicate_minor_authorization_job(monkeypatch):
             raise AssertionError("update_item should not be called for duplicates")
 
     monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
+    monkeypatch.setenv("AUTHORIZED_MINOR_FORM_ID", "iamr7tnj")
     monkeypatch.setattr(mod, "_jobs_table", lambda: FakeJobsTable())
 
     result = mod.handler(
@@ -200,3 +204,57 @@ def test_handler_skips_duplicate_minor_authorization_job(monkeypatch):
             "sk": "ATTENDEE#22793113508",
         }
     ]
+
+
+def test_handler_ignores_submission_from_other_form(monkeypatch):
+    updated: dict[str, object] = {}
+
+    class FakeJobsTable:
+        def get_item(self, Key):
+            return {}
+
+        def put_item(self, Item):
+            return None
+
+        def update_item(self, **kwargs):
+            updated.update(kwargs)
+
+    class FakeYouformTable:
+        def query(self, **kwargs):
+            return {
+                "Items": [
+                    {
+                        "submission_id": "o6ro2kooc5",
+                        "form_id": "another-form",
+                        "eventbrite_event_id": "1996475418721",
+                        "registration_email": "minor@example.com",
+                        "completed_at": "2026-08-03T18:18:00Z",
+                    }
+                ]
+            }
+
+    monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
+    monkeypatch.setenv("YOUFORM_SUBMISSIONS_TABLE_NAME", "test-youform")
+    monkeypatch.setenv("AUTHORIZED_MINOR_FORM_ID", "iamr7tnj")
+    monkeypatch.setattr(mod, "_jobs_table", lambda: FakeJobsTable())
+    monkeypatch.setattr(mod, "_youform_table", lambda: FakeYouformTable())
+
+    result = mod.handler(
+        {
+            "Records": [
+                {
+                    "body": (
+                        '{"event_id": "1996475418721", "attendee_id": "22793113508", '
+                        '"attendee_email": "minor@example.com"}'
+                    )
+                }
+            ]
+        },
+        None,
+    )
+
+    assert result["processed"][0]["status"] == "missing_form"
+    assert result["processed"][0]["validation_result"] == "form_missing"
+    assert result["processed"][0]["authorization_found"] is False
+    assert result["processed"][0]["matched_submission_id"] is None
+    assert updated["ExpressionAttributeValues"][":status"] == "missing_form"
