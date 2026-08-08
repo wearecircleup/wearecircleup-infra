@@ -267,6 +267,22 @@ def _normalize_answers(parsed_body: dict[str, Any], storage_config: dict[str, An
     return normalized
 
 
+def _detected_file_answers(parsed_body: dict[str, Any]) -> list[dict[str, str]]:
+    answers = parsed_body.get("answers")
+    if not isinstance(answers, dict):
+        return []
+    detected: list[dict[str, str]] = []
+    for question, answer in answers.items():
+        if _is_youform_file_url(answer):
+            detected.append(
+                {
+                    "question": str(question),
+                    "url": str(answer).strip(),
+                }
+            )
+    return detected
+
+
 def _answer_lookup(parsed_body: dict[str, Any]) -> dict[str, Any]:
     answers = parsed_body.get("answers")
     if not isinstance(answers, dict):
@@ -488,12 +504,24 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
 
     stored = False
     reconciliation: dict[str, Any] | None = None
+    storage_route: dict[str, Any] | None = None
+    stored_item: dict[str, Any] | None = None
+    detected_file_answers: list[dict[str, str]] = []
     if isinstance(parsed_body, dict):
+        storage_config = _storage_config_for_form(parsed_body.get("form_id"))
+        detected_file_answers = _detected_file_answers(parsed_body)
+        if storage_config is not None:
+            storage_route = {
+                "form_id": parsed_body.get("form_id"),
+                "table_name": storage_config.get("table_name"),
+                "bucket_name": storage_config.get("bucket_name"),
+                "storage_prefix": storage_config.get("storage_prefix"),
+                "reconcile_minor_authorization": storage_config.get("reconcile_minor_authorization"),
+            }
         stored, item = _store_submission(parsed_body)
-        if stored and item is not None:
-            storage_config = _storage_config_for_form(item.get("form_id"))
-            if storage_config and storage_config.get("reconcile_minor_authorization"):
-                reconciliation = _reconcile_minor_authorization_job(item)
+        stored_item = item
+        if stored and item is not None and storage_config and storage_config.get("reconcile_minor_authorization"):
+            reconciliation = _reconcile_minor_authorization_job(item)
 
     logger.info(
         "Received YouForm webhook: %s",
@@ -502,7 +530,10 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "request_context": event.get("requestContext"),
                 "raw_body": raw_body,
                 "parsed_body": parsed_body,
+                "storage_route": storage_route,
+                "file_answers_detected": detected_file_answers,
                 "stored": stored,
+                "stored_item": stored_item,
                 "reconciliation": reconciliation,
             },
             ensure_ascii=False,
