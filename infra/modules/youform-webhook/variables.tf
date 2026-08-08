@@ -97,3 +97,23 @@ variable "volunteer_intent_proposal_submissions_table_name" {
   description = "DynamoDB table name used to store volunteer intent proposal submissions."
   type        = string
 }
+
+variable "volunteer_intent_notification_from_email" {
+  description = "SES sender used for volunteer intent admin notifications."
+  type        = string
+}
+
+variable "volunteer_intent_notification_to_email" {
+  description = "SES destination used for volunteer intent admin notifications."
+  type        = string
+}
+
+variable "volunteer_intent_notification_reply_to_email" {
+  description = "Reply-to email used for volunteer intent admin notifications."
+  type        = string
+}
+
+variable "volunteer_intent_notification_logo_url" {
+  description = "Public logo URL rendered in volunteer intent admin notifications."
+  type        = string
+}

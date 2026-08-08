@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Preview - Volunteer Intent Admin Notification</title>
+  <style>
+    :root {
+      --bg: #f7f7f4;
+      --panel: #ffffff;
+      --ink: #0f4978;
+      --muted: #5e7f9c;
+      --soft: #7d95ad;
+      --line: #d7e2ec;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--ink);
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 16px;
+    }
+
+    .frame {
+      width: min(760px, 100%);
+      background: var(--panel);
+      box-shadow: 0 24px 60px rgba(15, 73, 120, 0.08);
+    }
+
+    .content {
+      padding: 32px 28px 28px;
+    }
+
+    .eyebrow,
+    .footer-brand {
+      margin: 0 0 16px;
+      color: var(--soft);
+      font-size: 12px;
+      line-height: 18px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0 0 18px;
+      font-size: 30px;
+      line-height: 1.1;
+      font-weight: 500;
+      color: var(--ink);
+    }
+
+    .body-text {
+      margin: 0 0 22px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .cta {
+      display: inline-block;
+      margin: 8px 0 24px;
+      padding: 16px 28px;
+      background: #4da3f5;
+      color: #fff;
+      text-decoration: none;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    table.data {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0 0 18px;
+    }
+
+    table.data td {
+      padding: 0 0 8px;
+      vertical-align: top;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    table.data td.label {
+      width: 220px;
+      color: var(--soft);
+    }
+
+    table.data td.value {
+      color: var(--ink);
+    }
+
+    .footer {
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: end;
+    }
+
+    .footer-link a {
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 12px;
+      line-height: 18px;
+    }
+
+    .footer-logo img {
+      display: block;
+      width: 42px;
+      height: auto;
+    }
+
+    @media (max-width: 720px) {
+      .content {
+        padding: 28px 20px 24px;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+
+      table.data td,
+      table.data td.label,
+      table.data td.value {
+        display: block;
+        width: 100%;
+      }
+
+      .footer {
+        grid-template-columns: 1fr;
+        align-items: start;
+      }
+
+      .footer-logo {
+        justify-self: start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="frame">
+      <section class="content">
+        <div class="eyebrow">Circle Up Community</div>
+        <h1>Nueva propuesta de voluntariado</h1>
+        <p class="body-text">Nicolas Diaz compartió una nueva propuesta para Circle Up. Te dejamos aquí los datos clave para revisarla rápido.</p>
+
+        <table class="data" role="presentation">
+          <tr>
+            <td class="label">PK</td>
+            <td class="value">FORM#46titbii</td>
+          </tr>
+          <tr>
+            <td class="label">Email</td>
+            <td class="value">danielnicolasmuner@gmail.com</td>
+          </tr>
+          <tr>
+            <td class="label">Teléfono</td>
+            <td class="value">+573211231212</td>
+          </tr>
+          <tr>
+            <td class="label">¿Cómo se llama tu evento?</td>
+            <td class="value">El arte de escuchar</td>
+          </tr>
+          <tr>
+            <td class="label">¿De qué se tratará tu evento?</td>
+            <td class="value">Hablaré sobre SOLID y cómo usarlo para separar responsabilidades de forma clara en proyectos de ingeniería.</td>
+          </tr>
+          <tr>
+            <td class="label">¿Qué día te gustaría que fuera el evento?</td>
+            <td class="value">2026-08-12</td>
+          </tr>
+          <tr>
+            <td class="label">¿A qué hora?</td>
+            <td class="value">8:00 p.m.</td>
+          </tr>
+          <tr>
+            <td class="label">¿Tienes alguna pregunta para nosotros?</td>
+            <td class="value">No</td>
+          </tr>
+        </table>
+
+        <a
+          class="cta"
+          href="https://wa.me/573211231212?text=Hola%20Nicolas%20Diaz%2C%20recib%C3%AD%20tu%20propuesta%20sobre%20*El%20arte%20de%20escuchar*%2C%20con%20fecha%20tentativa%2012%20de%20agosto%20de%202026.%20Gracias%20por%20compartirla.%20Mi%20nombre%20es%20Daniel%2C%20no%20soy%20un%20bot%20respondiendo%20autom%C3%A1ticamente.%20Me%20gustar%C3%ADa%20saber%20si%20ya%20tienes%20un%20lugar%20pensado%20y%20un%20aforo.%20La%20idea%20es%20empezar%20con%203-4%20personas%20y%2C%20si%20es%20posible%2C%20tener%20una%20llamada%20de%2015%20min%20o%20menos%2C%20para%20resolver%20dudas%20o%20explicar%20algunos%20detalles.%20No%20dudes%20en%20escribir%20a%20este%20n%C3%BAmero%20cualquier%20duda%3B%20un%20mensaje%20de%20voz%20tambi%C3%A9n%20est%C3%A1%20perfecto."
+        >
+          Escribir por WhatsApp
+        </a>
+
+        <div class="footer">
+          <div>
+            <div class="footer-brand">Circle Up Community</div>
+            <div class="footer-link"><a href="https://circleup.com.co">circleup.com.co</a></div>
+          </div>
+          <div class="footer-logo">
+            <img src="https://wearecircleup-prod-public-assets-311923415472-us-east-1.s3.us-east-1.amazonaws.com/email-assets/logo.png" alt="Circle Up Community">
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</body>
+</html>

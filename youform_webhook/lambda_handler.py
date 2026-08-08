@@ -4,8 +4,10 @@ import logging
 import mimetypes
 import os
 import re
+from datetime import datetime, timezone
+from html import escape
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 import boto3
@@ -21,13 +23,26 @@ SIGNATURE_QUESTION = "Firma para autorizar"
 EVENT_URL_QUESTION = "¿A qué evento asiste?"
 EVENT_DATE_QUESTION = "¿Qué día es el evento?"
 REGISTRATION_EMAIL_QUESTION = "¿Con qué correo vas a realizar la inscripción?"
+CONTACT_NAME_QUESTION = "Nombre"
+CONTACT_EMAIL_QUESTION = "Correo"
+CONTACT_PHONE_QUESTION = "Teléfono"
+VOLUNTEER_INTENT_EVENT_NAME_QUESTION = "¿Cómo se llama tu evento?"
+VOLUNTEER_INTENT_PRESENTATION_QUESTION = "¿Cómo te presentarías?"
+VOLUNTEER_INTENT_TOPIC_QUESTION = "¿De qué se tratará tu evento?"
+VOLUNTEER_INTENT_REQUESTED_DATE_QUESTION = "¿Qué día te gustaría que fuera el evento?"
+VOLUNTEER_INTENT_REQUESTED_TIME_QUESTION = "¿A qué hora?"
+VOLUNTEER_INTENT_ADMIN_QUESTION = "¿Tienes alguna pregunta para nosotros?"
 UNKNOWN_EVENT_ID = "UNKNOWN_EVENT"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _clean_text(value: Any) -> Any:
     if not isinstance(value, str):
         return value
-    if not any(marker in value for marker in ("Ã", "Â", "â", "Ð")):
+    if not any(marker in value for marker in ("Ãƒ", "Ã‚", "Ã¢", "Ã")):
         return value
     try:
         return value.encode("latin-1").decode("utf-8")
@@ -43,6 +58,11 @@ def _normalized_question_key(value: str) -> str:
 def _dynamodb_table(table_name: str):
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     return boto3.resource("dynamodb", region_name=region).Table(table_name)
+
+
+def _ses_client():
+    region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+    return boto3.client("sesv2", region_name=region)
 
 
 def _load_secret(secret_id: str) -> dict[str, str]:
@@ -95,6 +115,8 @@ def _configured_form_routes() -> dict[str, dict[str, Any]]:
             "storage_prefix": "youform-signatures",
             "reconcile_minor_authorization": True,
             "preserve_signature_key": True,
+            "key_strategy": "eventbrite_event",
+            "admin_notification_type": None,
         }
 
     proposal_form_id = _configured_form_id(
@@ -109,6 +131,8 @@ def _configured_form_routes() -> dict[str, dict[str, Any]]:
             "storage_prefix": None,
             "reconcile_minor_authorization": False,
             "preserve_signature_key": False,
+            "key_strategy": "form",
+            "admin_notification_type": "volunteer_intent_proposal",
         }
 
     background_form_id = _configured_form_id(
@@ -123,6 +147,8 @@ def _configured_form_routes() -> dict[str, dict[str, Any]]:
             "storage_prefix": f"volunteer-background-checks/{background_form_id}",
             "reconcile_minor_authorization": False,
             "preserve_signature_key": False,
+            "key_strategy": "form",
+            "admin_notification_type": None,
         }
 
     return routes
@@ -253,17 +279,23 @@ def _normalize_answers(parsed_body: dict[str, Any], storage_config: dict[str, An
         return []
     normalized: list[dict[str, Any]] = []
     for question, answer in answers.items():
-        normalized_answer = answer
+        normalized_question = _clean_text(str(question))
+        normalized_answer = _clean_text(answer) if isinstance(answer, str) else answer
         if _is_youform_file_url(answer) and storage_config.get("bucket_name"):
             try:
-                normalized_answer = _store_file_answer(parsed_body, str(question), answer.strip(), storage_config)
+                normalized_answer = _store_file_answer(
+                    parsed_body,
+                    str(normalized_question),
+                    answer.strip(),
+                    storage_config,
+                )
             except Exception:
                 logger.exception(
                     "Failed to copy YouForm file for submission %s question %s. Keeping original URL.",
                     parsed_body.get("submission_id"),
-                    question,
+                    normalized_question,
                 )
-        normalized.append({"question": str(question), "answer": normalized_answer})
+        normalized.append({"question": str(normalized_question), "answer": normalized_answer})
     return normalized
 
 
@@ -276,7 +308,7 @@ def _detected_file_answers(parsed_body: dict[str, Any]) -> list[dict[str, str]]:
         if _is_youform_file_url(answer):
             detected.append(
                 {
-                    "question": str(question),
+                    "question": str(_clean_text(str(question))),
                     "url": str(answer).strip(),
                 }
             )
@@ -288,9 +320,17 @@ def _answer_lookup(parsed_body: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(answers, dict):
         return {}
     return {
-        _normalized_question_key(str(question)): answer
+        _normalized_question_key(str(question)): (_clean_text(answer) if isinstance(answer, str) else answer)
         for question, answer in answers.items()
     }
+
+
+def _extract_scalar_answer(answer_lookup: dict[str, Any], *questions: str) -> str | None:
+    for question in questions:
+        value = answer_lookup.get(_normalized_question_key(question))
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _extract_eventbrite_event_metadata(event_url: Any) -> dict[str, str | None]:
@@ -319,22 +359,95 @@ def _extract_eventbrite_event_metadata(event_url: Any) -> dict[str, str | None]:
     }
 
 
+def _normalized_phone_key(phone: str) -> str:
+    return re.sub(r"\s+", "", phone.strip())
+
+
+def _normalized_whatsapp_phone(phone: str | None) -> str | None:
+    if not isinstance(phone, str) or not phone.strip():
+        return None
+    digits = re.sub(r"\D+", "", phone)
+    return digits or None
+
+
+def _format_date_long_es(value: str | None) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value).date()
+    except ValueError:
+        return value
+    months = {
+        1: "enero",
+        2: "febrero",
+        3: "marzo",
+        4: "abril",
+        5: "mayo",
+        6: "junio",
+        7: "julio",
+        8: "agosto",
+        9: "septiembre",
+        10: "octubre",
+        11: "noviembre",
+        12: "diciembre",
+    }
+    return f"{parsed.day} de {months[parsed.month]} de {parsed.year}"
+
+
+def _build_volunteer_intent_whatsapp_url(item: dict[str, Any]) -> str | None:
+    phone = _normalized_whatsapp_phone(item.get("contact_phone"))
+    if not phone:
+        return None
+    contact_name = item.get("contact_name") or "hola"
+    event_name = item.get("proposal_event_name") or "tu evento"
+    requested_date = _format_date_long_es(item.get("proposal_requested_date")) or str(
+        item.get("proposal_requested_date") or "la fecha tentativa"
+    )
+    message = (
+        f"Hola {contact_name}, recibí tu propuesta sobre {event_name} con fecha tentativa {requested_date}. "
+        "Gracias por compartirla. Mi nombre es Daniel, no soy un bot respondiendo automáticamente. "
+        "Me gustaría saber si ya tienes un lugar pensado y un aforo. La idea es empezar con 3-4 personas y, "
+        "si es posible, tener una llamada de 15 min o menos para resolver dudas o explicar algunos detalles."
+    )
+    return f"https://wa.me/{phone}?text={quote(message)}"
+
+
 def _build_keys(
+    key_strategy: str,
     eventbrite_event_id: str | None,
     form_id: Any,
     submission_id: Any,
     registrant_email: str | None,
     event_date: str | None,
     completed_at: str | None,
+    contact_phone: str | None = None,
 ) -> dict[str, str]:
-    safe_event_id = eventbrite_event_id or UNKNOWN_EVENT_ID
     safe_form_id = str(form_id or "UNKNOWN_FORM")
     safe_submission_id = str(submission_id or "UNKNOWN_SUBMISSION")
+    safe_completed_at = completed_at or "UNKNOWN"
+
+    if key_strategy == "form":
+        keys = {
+            "pk": f"FORM#{safe_form_id}",
+            "sk": f"SUBMISSION#{safe_submission_id}",
+            "gsi1pk": f"FORM#{safe_form_id}",
+            "gsi1sk": f"COMPLETED_AT#{safe_completed_at}#SUBMISSION#{safe_submission_id}",
+        }
+        if registrant_email:
+            normalized_email = registrant_email.strip().lower()
+            keys["gsi2pk"] = f"EMAIL#{normalized_email}"
+            keys["gsi2sk"] = f"FORM#{safe_form_id}#COMPLETED_AT#{safe_completed_at}#SUBMISSION#{safe_submission_id}"
+        if contact_phone:
+            keys["gsi3pk"] = f"PHONE#{_normalized_phone_key(contact_phone)}"
+            keys["gsi3sk"] = f"FORM#{safe_form_id}#COMPLETED_AT#{safe_completed_at}#SUBMISSION#{safe_submission_id}"
+        return keys
+
+    safe_event_id = eventbrite_event_id or UNKNOWN_EVENT_ID
     keys = {
         "pk": f"EVENT#{safe_event_id}#FORM#{safe_form_id}",
         "sk": f"SUBMISSION#{safe_submission_id}",
         "gsi1pk": f"EVENT#{safe_event_id}",
-        "gsi1sk": f"COMPLETED_AT#{completed_at or 'UNKNOWN'}#SUBMISSION#{safe_submission_id}",
+        "gsi1sk": f"COMPLETED_AT#{safe_completed_at}#SUBMISSION#{safe_submission_id}",
     }
     if registrant_email:
         normalized_email = registrant_email.strip().lower()
@@ -352,21 +465,36 @@ def _build_submission_item(parsed_body: dict[str, Any], storage_config: dict[str
     submission_id = parsed_body.get("submission_id")
     if not submission_id:
         return None
+
     answer_lookup = _answer_lookup(parsed_body)
+    key_strategy = str(storage_config.get("key_strategy") or "eventbrite_event")
     event_metadata = _extract_eventbrite_event_metadata(
         answer_lookup.get(_normalized_question_key(EVENT_URL_QUESTION))
     )
-    event_date = answer_lookup.get(_normalized_question_key(EVENT_DATE_QUESTION))
-    registrant_email = answer_lookup.get(_normalized_question_key(REGISTRATION_EMAIL_QUESTION))
+    event_date = _extract_scalar_answer(answer_lookup, EVENT_DATE_QUESTION)
+    registration_email = _extract_scalar_answer(answer_lookup, REGISTRATION_EMAIL_QUESTION)
+    contact_name = _extract_scalar_answer(answer_lookup, CONTACT_NAME_QUESTION)
+    contact_email = _extract_scalar_answer(answer_lookup, CONTACT_EMAIL_QUESTION)
+    contact_phone = _extract_scalar_answer(answer_lookup, CONTACT_PHONE_QUESTION)
+    proposal_event_name = _extract_scalar_answer(answer_lookup, VOLUNTEER_INTENT_EVENT_NAME_QUESTION)
+    proposal_presenter_intro = _extract_scalar_answer(answer_lookup, VOLUNTEER_INTENT_PRESENTATION_QUESTION)
+    proposal_topic = _extract_scalar_answer(answer_lookup, VOLUNTEER_INTENT_TOPIC_QUESTION)
+    proposal_requested_date = _extract_scalar_answer(answer_lookup, VOLUNTEER_INTENT_REQUESTED_DATE_QUESTION)
+    proposal_requested_time = _extract_scalar_answer(answer_lookup, VOLUNTEER_INTENT_REQUESTED_TIME_QUESTION)
+    proposal_admin_question = _extract_scalar_answer(answer_lookup, VOLUNTEER_INTENT_ADMIN_QUESTION)
+    preferred_email = registration_email if key_strategy == "eventbrite_event" else (contact_email or registration_email)
     completed_at = parsed_body.get("completed_at")
+
     item = {
         **_build_keys(
+            key_strategy,
             event_metadata["eventbrite_event_id"],
             parsed_body.get("form_id"),
             submission_id,
-            registrant_email if isinstance(registrant_email, str) else None,
+            preferred_email,
             event_date if isinstance(event_date, str) else None,
             completed_at if isinstance(completed_at, str) else None,
+            contact_phone,
         ),
         "entity_type": "youform_submission",
         "submission_id": submission_id,
@@ -381,10 +509,252 @@ def _build_submission_item(parsed_body: dict[str, Any], storage_config: dict[str
         "eventbrite_event_name": event_metadata["eventbrite_event_name"],
         "eventbrite_event_url": event_metadata["eventbrite_event_url"],
         "event_date": event_date,
-        "registration_email": registrant_email.lower().strip() if isinstance(registrant_email, str) else None,
+        "registration_email": registration_email.lower().strip() if isinstance(registration_email, str) else None,
+        "contact_name": contact_name,
+        "contact_email": contact_email.lower().strip() if isinstance(contact_email, str) else None,
+        "contact_phone": contact_phone,
+        "proposal_event_name": proposal_event_name,
+        "proposal_presenter_intro": proposal_presenter_intro,
+        "proposal_topic": proposal_topic,
+        "proposal_requested_date": proposal_requested_date,
+        "proposal_requested_time": proposal_requested_time,
+        "proposal_admin_question": proposal_admin_question,
         "answers": _normalize_answers(parsed_body, storage_config),
     }
     return {key: value for key, value in item.items() if value is not None}
+
+
+def _volunteer_intent_from_email() -> str:
+    value = os.getenv("VOLUNTEER_INTENT_NOTIFICATION_FROM_EMAIL")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise RuntimeError("VOLUNTEER_INTENT_NOTIFICATION_FROM_EMAIL is not configured.")
+
+
+def _volunteer_intent_allowed_admin_emails() -> set[str]:
+    return {
+        "wearecircleup@gmail.com",
+        "hola@circleup.com.co",
+    }
+
+
+def _volunteer_intent_to_emails() -> list[str]:
+    value = os.getenv("VOLUNTEER_INTENT_NOTIFICATION_TO_EMAIL")
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeError("VOLUNTEER_INTENT_NOTIFICATION_TO_EMAIL is not configured.")
+    parsed = [email.strip().lower() for email in value.split(",") if email.strip()]
+    if not parsed:
+        raise RuntimeError("VOLUNTEER_INTENT_NOTIFICATION_TO_EMAIL must contain at least one email.")
+    unauthorized = [email for email in parsed if email not in _volunteer_intent_allowed_admin_emails()]
+    if unauthorized:
+        raise RuntimeError(
+            "VOLUNTEER_INTENT_NOTIFICATION_TO_EMAIL contains unauthorized recipients: "
+            + ", ".join(unauthorized)
+        )
+    return parsed
+
+
+def _volunteer_intent_reply_to_email() -> str:
+    value = os.getenv("VOLUNTEER_INTENT_NOTIFICATION_REPLY_TO_EMAIL")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return _volunteer_intent_from_email()
+
+
+def _volunteer_intent_logo_url() -> str | None:
+    value = os.getenv("VOLUNTEER_INTENT_NOTIFICATION_LOGO_URL")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _volunteer_intent_admin_subject_prefix() -> str:
+    value = os.getenv("VOLUNTEER_INTENT_NOTIFICATION_SUBJECT_PREFIX")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "Nueva propuesta de voluntariado"
+
+
+def _build_volunteer_intent_admin_email(item: dict[str, Any]) -> tuple[str, str, str]:
+    event_name = item.get("proposal_event_name") or "Nueva propuesta"
+    subject = f"{_volunteer_intent_admin_subject_prefix()}: {event_name}"
+    support_url = os.getenv("VOLUNTEER_INTENT_NOTIFICATION_SUPPORT_URL", "https://circleup.com.co")
+    logo_url = _volunteer_intent_logo_url()
+    whatsapp_url = _build_volunteer_intent_whatsapp_url(item)
+
+    summary = (
+        f"{item.get('contact_name') or 'Alguien'} compartió una nueva propuesta para Circle Up. "
+        "Te dejamos aquí los datos clave para revisarla rápido."
+    )
+
+    field_rows = [
+        ("PK", item.get("pk")),
+        ("Email", item.get("contact_email") or item.get("registration_email")),
+        ("Teléfono", item.get("contact_phone")),
+        ("¿Cómo se llama tu evento?", item.get("proposal_event_name")),
+        ("¿De qué se tratará tu evento?", item.get("proposal_topic")),
+        ("¿Qué día te gustaría que fuera el evento?", item.get("proposal_requested_date")),
+        ("¿A qué hora?", item.get("proposal_requested_time")),
+        ("¿Tienes alguna pregunta para nosotros?", item.get("proposal_admin_question")),
+    ]
+    field_rows = [(label, str(value)) for label, value in field_rows if value]
+
+    text_lines = [
+        "Hola,",
+        "",
+        summary,
+        "",
+    ]
+    for label, value in field_rows:
+        text_lines.append(f"{label}: {value}")
+    if whatsapp_url:
+        text_lines.extend(["", f"WhatsApp: {whatsapp_url}"])
+    text_lines.extend(["", "Circle Up Community", "circleup.com.co"])
+    text_body = "\n".join(text_lines)
+
+    html_rows = "".join(
+        (
+            "<tr>"
+            f"<td style=\"padding: 0 0 8px; width: 220px; vertical-align: top; color: #7d95ad; font-size: 12px; line-height: 1.6;\">{escape(label)}</td>"
+            f"<td style=\"padding: 0 0 8px; vertical-align: top; color: #153f69; font-size: 12px; line-height: 1.6;\">{escape(value)}</td>"
+            "</tr>"
+        )
+        for label, value in field_rows
+    )
+
+    html_body = (
+        "<html>"
+        "<head>"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+        "<style>"
+        "@media screen and (max-width: 720px) {"
+        "  .admin-shell { width: 100% !important; }"
+        "  .content-col { padding: 28px 20px 22px !important; }"
+        "}"
+        "</style>"
+        "</head>"
+        "<body style=\"margin: 0; padding: 0; background-color: #f7f7f4; font-family: Arial, Helvetica, sans-serif; color: #153f69;\">"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background-color: #f7f7f4; padding: 40px 20px;\">"
+        "<tr><td align=\"center\">"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" class=\"admin-shell\" style=\"max-width: 760px; background-color: #ffffff;\">"
+        "<tr><td class=\"content-col\" style=\"padding: 32px 28px 28px;\">"
+        "<div style=\"margin: 0 0 16px; color: #7d95ad; font-size: 12px; line-height: 18px; text-transform: uppercase; letter-spacing: 0.12em;\">Circle Up Community</div>"
+        "<h1 style=\"margin: 0 0 18px; font-size: 30px; line-height: 1.1; font-weight: 500; color: #0f4978;\">Nueva propuesta de voluntariado</h1>"
+        f"<p style=\"margin: 0 0 22px; font-size: 12px; line-height: 1.7; color: #5e7f9c;\">{escape(summary)}</p>"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin: 0 0 18px;\">"
+        f"{html_rows}"
+        "</table>"
+    )
+    if whatsapp_url:
+        html_body += (
+            "<p style=\"margin: 8px 0 24px;\">"
+            f"<a href=\"{escape(whatsapp_url, quote=True)}\" "
+            "style=\"display: inline-block; padding: 16px 28px; background-color: #4da3f5; color: #ffffff; text-decoration: none; border-radius: 0; font-size: 16px; font-weight: 700;\">"
+            "Escribir por WhatsApp"
+            "</a>"
+            "</p>"
+        )
+    html_body += (
+        "<div style=\"padding-top: 20px; border-top: 1px solid #d7e2ec;\">"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">"
+        "<tr>"
+        "<td style=\"vertical-align: bottom; text-align: left;\">"
+        "<div style=\"margin: 0 0 4px; color: #7d95ad; font-size: 12px; line-height: 18px; text-transform: uppercase; letter-spacing: 0.12em;\">Circle Up Community</div>"
+        f"<div style=\"font-size: 12px; line-height: 18px; color: #0f4978;\"><a href=\"{escape(support_url, quote=True)}\" style=\"color: #0f4978; text-decoration: none;\">circleup.com.co</a></div>"
+        "</td>"
+        "<td style=\"vertical-align: bottom; text-align: right;\">"
+    )
+    if logo_url:
+        html_body += (
+            f"<img src=\"{escape(logo_url, quote=True)}\" alt=\"Circle Up Community\" width=\"42\" style=\"display: inline-block; width: 42px; height: auto; border: 0; outline: none; text-decoration: none;\">"
+        )
+    html_body += (
+        "</td>"
+        "</tr>"
+        "</table>"
+        "</div>"
+        "</td></tr></table></td></tr></table></body></html>"
+    )
+    return subject, text_body, html_body
+
+
+def _build_volunteer_intent_whatsapp_url(item: dict[str, Any]) -> str | None:
+    phone = _normalized_whatsapp_phone(item.get("contact_phone"))
+    if not phone:
+        return None
+    contact_name = item.get("contact_name") or "hola"
+    event_name = item.get("proposal_event_name") or "tu evento"
+    requested_date = _format_date_long_es(item.get("proposal_requested_date")) or str(
+        item.get("proposal_requested_date") or "la fecha tentativa"
+    )
+    message = (
+        f"Hola {contact_name}, recibí tu propuesta sobre *{event_name}*, con fecha tentativa {requested_date}. "
+        "Gracias por compartirla. Mi nombre es Daniel, no soy un bot respondiendo automáticamente. "
+        "Me gustaría saber si ya tienes un lugar pensado y un aforo. La idea es empezar con 3-4 personas y, "
+        "si es posible, tener una llamada de 15 min o menos, para resolver dudas o explicar algunos detalles. "
+        "No dudes en escribir a este número cualquier duda; un mensaje de voz también está perfecto."
+    )
+    return f"https://wa.me/{phone}?text={quote(message)}"
+
+
+def _volunteer_intent_admin_subject_prefix() -> str:
+    value = os.getenv("VOLUNTEER_INTENT_NOTIFICATION_SUBJECT_PREFIX")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "Propuesta voluntario"
+
+
+def _send_volunteer_intent_admin_notification(item: dict[str, Any]) -> dict[str, Any]:
+    subject, text_body, html_body = _build_volunteer_intent_admin_email(item)
+    recipients = _volunteer_intent_to_emails()
+    response = _ses_client().send_email(
+        FromEmailAddress=_volunteer_intent_from_email(),
+        Destination={"ToAddresses": recipients},
+        ReplyToAddresses=[_volunteer_intent_reply_to_email()],
+        Content={
+            "Simple": {
+                "Subject": {"Data": subject, "Charset": "UTF-8"},
+                "Body": {
+                    "Text": {"Data": text_body, "Charset": "UTF-8"},
+                    "Html": {"Data": html_body, "Charset": "UTF-8"},
+                },
+            }
+        },
+    )
+    return {
+        "sent": True,
+        "status": "sent",
+        "message_id": response.get("MessageId"),
+        "recipient": ", ".join(recipients),
+    }
+
+
+def _record_admin_notification_result(
+    table_name: str,
+    item: dict[str, Any],
+    result: dict[str, Any],
+    error_detail: str | None = None,
+) -> None:
+    expression_values: dict[str, Any] = {
+        ":status": result["status"],
+        ":message_id": result.get("message_id"),
+        ":recipient": result.get("recipient"),
+        ":error": error_detail,
+    }
+    update_expression = (
+        "SET admin_notification_status = :status, "
+        "admin_notification_message_id = :message_id, "
+        "admin_notification_recipient = :recipient, "
+        "admin_notification_error = :error"
+    )
+    if result.get("sent"):
+        expression_values[":sent_at"] = _utc_now()
+        update_expression += ", admin_notification_sent_at = :sent_at"
+    _dynamodb_table(table_name).update_item(
+        Key={"pk": item["pk"], "sk": item["sk"]},
+        UpdateExpression=update_expression,
+        ExpressionAttributeValues=expression_values,
+    )
 
 
 def _reconcile_minor_authorization_job(item: dict[str, Any]) -> dict[str, Any]:
@@ -504,9 +874,11 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
 
     stored = False
     reconciliation: dict[str, Any] | None = None
+    admin_notification: dict[str, Any] | None = None
     storage_route: dict[str, Any] | None = None
     stored_item: dict[str, Any] | None = None
     detected_file_answers: list[dict[str, str]] = []
+
     if isinstance(parsed_body, dict):
         storage_config = _storage_config_for_form(parsed_body.get("form_id"))
         detected_file_answers = _detected_file_answers(parsed_body)
@@ -517,11 +889,25 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "bucket_name": storage_config.get("bucket_name"),
                 "storage_prefix": storage_config.get("storage_prefix"),
                 "reconcile_minor_authorization": storage_config.get("reconcile_minor_authorization"),
+                "key_strategy": storage_config.get("key_strategy"),
+                "admin_notification_type": storage_config.get("admin_notification_type"),
             }
         stored, item = _store_submission(parsed_body)
         stored_item = item
         if stored and item is not None and storage_config and storage_config.get("reconcile_minor_authorization"):
             reconciliation = _reconcile_minor_authorization_job(item)
+        if stored and item is not None and storage_config and storage_config.get("admin_notification_type") == "volunteer_intent_proposal":
+            try:
+                admin_notification = _send_volunteer_intent_admin_notification(item)
+                _record_admin_notification_result(str(storage_config["table_name"]), item, admin_notification)
+            except Exception as exc:
+                logger.exception("Failed to send volunteer intent admin notification for submission %s.", item.get("submission_id"))
+                admin_notification = {
+                    "sent": False,
+                    "status": "failed",
+                    "message_id": None,
+                }
+                _record_admin_notification_result(str(storage_config["table_name"]), item, admin_notification, str(exc))
 
     logger.info(
         "Received YouForm webhook: %s",
@@ -534,6 +920,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "file_answers_detected": detected_file_answers,
                 "stored": stored,
                 "stored_item": stored_item,
+                "admin_notification": admin_notification,
                 "reconciliation": reconciliation,
             },
             ensure_ascii=False,
@@ -549,6 +936,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "ok": True,
                 "message": "YouForm webhook received.",
                 "stored": stored,
+                "admin_notification": admin_notification,
                 "reconciliation": reconciliation,
             }
         ),

@@ -133,6 +133,10 @@ module "youform_webhook" {
   volunteer_background_check_submissions_table_name = module.youform_background_check_submissions_dynamodb.table_name
   volunteer_intent_proposal_submissions_table_arn   = module.youform_volunteer_intent_submissions_dynamodb.table_arn
   volunteer_intent_proposal_submissions_table_name  = module.youform_volunteer_intent_submissions_dynamodb.table_name
+  volunteer_intent_notification_from_email          = local.youform_volunteer_intent_sender
+  volunteer_intent_notification_to_email            = local.youform_volunteer_intent_recipient
+  volunteer_intent_notification_reply_to_email      = local.youform_volunteer_intent_reply_to
+  volunteer_intent_notification_logo_url            = local.youform_volunteer_intent_logo
 }
 
 module "minor_authorization_validator" {

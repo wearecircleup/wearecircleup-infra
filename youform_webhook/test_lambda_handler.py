@@ -344,3 +344,129 @@ def test_reconciliation_skips_non_authorized_form(monkeypatch):
         "reconciled": False,
         "reason": "form_id_not_authorized",
     }
+
+
+def test_volunteer_intent_submission_uses_form_keys_and_contact_indexes(monkeypatch):
+    saved: dict[str, object] = {}
+
+    class FakeProposalTable:
+        def put_item(self, Item):
+            saved["Item"] = Item
+
+    parsed_body = {
+        "submission_id": "ahcscgfgka",
+        "form_id": "46titbii",
+        "form_name": "Volunteer Intent Proposal",
+        "event_type": "submission",
+        "started_at": "2026-08-08T21:09:21.000000Z",
+        "completed_at": "2026-08-08T21:13:52.000000Z",
+        "answers": {
+            "¿Cómo se llama tu evento?": "El arte de escuchar",
+            "¿De qué se tratará tu evento?": "Hablaré sobre SOLID.",
+            "¿Qué día te gustaría que fuera el evento?": "2026-08-12",
+            "¿A qué hora?": "8:00 p.m.",
+            "¿Tienes alguna pregunta para nosotros?": "No",
+            "Nombre": "Nicolas Diaz",
+            "Correo": "danielnicolasmuner@gmail.com",
+            "Teléfono": "+573211231212",
+        },
+    }
+
+    monkeypatch.setenv("VOLUNTEER_INTENT_PROPOSAL_FORM_ID", "46titbii")
+    monkeypatch.setenv("VOLUNTEER_INTENT_PROPOSAL_SUBMISSIONS_TABLE_NAME", "proposal-table")
+
+    def fake_dynamodb_table(table_name: str):
+        if table_name == "proposal-table":
+            return FakeProposalTable()
+        raise AssertionError(f"Unexpected table: {table_name}")
+
+    monkeypatch.setattr(mod, "_dynamodb_table", fake_dynamodb_table)
+
+    stored, item = mod._store_submission(parsed_body)
+
+    assert stored is True
+    assert item["pk"] == "FORM#46titbii"
+    assert item["sk"] == "SUBMISSION#ahcscgfgka"
+    assert item["gsi1pk"] == "FORM#46titbii"
+    assert item["gsi2pk"] == "EMAIL#danielnicolasmuner@gmail.com"
+    assert item["gsi3pk"] == "PHONE#+573211231212"
+    assert item["contact_email"] == "danielnicolasmuner@gmail.com"
+    assert item["contact_phone"] == "+573211231212"
+    assert item["proposal_event_name"] == "El arte de escuchar"
+    assert saved["Item"]["pk"] == "FORM#46titbii"
+
+
+def test_handler_sends_volunteer_intent_admin_notification(monkeypatch):
+    saved: dict[str, object] = {}
+    updated: list[dict[str, object]] = []
+    sent: dict[str, object] = {}
+
+    class FakeProposalTable:
+        def put_item(self, Item):
+            saved["Item"] = Item
+
+        def update_item(self, **kwargs):
+            updated.append(kwargs)
+
+    class FakeSes:
+        def send_email(self, **kwargs):
+            sent.update(kwargs)
+            return {"MessageId": "ses-msg-1"}
+
+    parsed_body = {
+        "submission_id": "ahcscgfgka",
+        "form_id": "46titbii",
+        "form_name": "Volunteer Intent Proposal",
+        "event_type": "submission",
+        "completed_at": "2026-08-08T21:13:52.000000Z",
+        "answers": {
+            "¿Cómo se llama tu evento?": "El arte de escuchar",
+            "¿De qué se tratará tu evento?": "Hablaré sobre SOLID.",
+            "¿Qué día te gustaría que fuera el evento?": "2026-08-12",
+            "¿A qué hora?": "8:00 p.m.",
+            "¿Tienes alguna pregunta para nosotros?": "No",
+            "Nombre": "Nicolas Diaz",
+            "Correo": "danielnicolasmuner@gmail.com",
+            "Teléfono": "+573211231212",
+        },
+    }
+
+    monkeypatch.setenv("VOLUNTEER_INTENT_PROPOSAL_FORM_ID", "46titbii")
+    monkeypatch.setenv("VOLUNTEER_INTENT_PROPOSAL_SUBMISSIONS_TABLE_NAME", "proposal-table")
+    monkeypatch.setenv("VOLUNTEER_INTENT_NOTIFICATION_FROM_EMAIL", "Circle Up Voluntariado <hola@circleup.com.co>")
+    monkeypatch.setenv(
+        "VOLUNTEER_INTENT_NOTIFICATION_TO_EMAIL",
+        "wearecircleup@gmail.com,hola@circleup.com.co",
+    )
+    monkeypatch.setenv("VOLUNTEER_INTENT_NOTIFICATION_REPLY_TO_EMAIL", "hola@circleup.com.co")
+    monkeypatch.setenv("VOLUNTEER_INTENT_NOTIFICATION_LOGO_URL", "https://circleup.com.co/logo.png")
+
+    def fake_dynamodb_table(table_name: str):
+        if table_name == "proposal-table":
+            return FakeProposalTable()
+        raise AssertionError(f"Unexpected table: {table_name}")
+
+    monkeypatch.setattr(mod, "_dynamodb_table", fake_dynamodb_table)
+    monkeypatch.setattr(mod, "_ses_client", lambda: FakeSes())
+
+    response = mod.handler({"body": mod.json.dumps(parsed_body)}, None)
+    payload = mod.json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert payload["stored"] is True
+    assert payload["admin_notification"]["status"] == "sent"
+    assert sent["Destination"] == {
+        "ToAddresses": ["wearecircleup@gmail.com", "hola@circleup.com.co"]
+    }
+    assert "wa.me/573211231212" in sent["Content"]["Simple"]["Body"]["Html"]["Data"]
+    assert updated[0]["Key"] == {"pk": "FORM#46titbii", "sk": "SUBMISSION#ahcscgfgka"}
+
+
+def test_volunteer_intent_to_emails_rejects_unauthorized_recipient(monkeypatch):
+    monkeypatch.setenv(
+        "VOLUNTEER_INTENT_NOTIFICATION_TO_EMAIL",
+        "hola@circleup.com.co,alguien@example.com",
+    )
+
+    with pytest.raises(RuntimeError, match="unauthorized recipients"):
+        mod._volunteer_intent_to_emails()
