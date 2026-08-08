@@ -75,6 +75,73 @@ def _authorized_minor_form_id() -> str:
     raise RuntimeError("AUTHORIZED_MINOR_FORM_ID is not configured.")
 
 
+def _configured_form_id(secret: dict[str, str], secret_key: str, env_key: str) -> str:
+    value = (secret.get(secret_key) or "").strip()
+    if value:
+        return value
+    return (os.getenv(env_key) or "").strip()
+
+
+def _configured_form_routes() -> dict[str, dict[str, Any]]:
+    secret_id = os.getenv("EVENTBRITE_SECRET_ID")
+    secret = _load_secret(secret_id) if secret_id else {}
+    routes: dict[str, dict[str, Any]] = {}
+
+    minor_form_id = _configured_form_id(secret, "AUTHORIZED_MINOR_FORM_ID", "AUTHORIZED_MINOR_FORM_ID")
+    if minor_form_id:
+        routes[minor_form_id] = {
+            "table_name": os.getenv("MINOR_AUTHORIZATION_SUBMISSIONS_TABLE_NAME"),
+            "bucket_name": os.getenv("MINOR_AUTHORIZATION_FILES_BUCKET_NAME"),
+            "storage_prefix": "youform-signatures",
+            "reconcile_minor_authorization": True,
+            "preserve_signature_key": True,
+        }
+
+    proposal_form_id = _configured_form_id(
+        secret,
+        "VOLUNTEER_INTENT_PROPOSAL_FORM_ID",
+        "VOLUNTEER_INTENT_PROPOSAL_FORM_ID",
+    )
+    if proposal_form_id:
+        routes[proposal_form_id] = {
+            "table_name": os.getenv("VOLUNTEER_INTENT_PROPOSAL_SUBMISSIONS_TABLE_NAME"),
+            "bucket_name": None,
+            "storage_prefix": None,
+            "reconcile_minor_authorization": False,
+            "preserve_signature_key": False,
+        }
+
+    background_form_id = _configured_form_id(
+        secret,
+        "VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID",
+        "VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID",
+    )
+    if background_form_id:
+        routes[background_form_id] = {
+            "table_name": os.getenv("VOLUNTEER_BACKGROUND_CHECK_SUBMISSIONS_TABLE_NAME"),
+            "bucket_name": os.getenv("VOLUNTEER_BACKGROUND_CHECK_FILES_BUCKET_NAME"),
+            "storage_prefix": f"volunteer-background-checks/{background_form_id}",
+            "reconcile_minor_authorization": False,
+            "preserve_signature_key": False,
+        }
+
+    return routes
+
+
+def _storage_config_for_form(form_id: Any) -> dict[str, Any] | None:
+    normalized_form_id = str(form_id or "").strip()
+    if not normalized_form_id:
+        return None
+    config = _configured_form_routes().get(normalized_form_id)
+    if not config:
+        return None
+    table_name = str(config.get("table_name") or "").strip()
+    if not table_name:
+        logger.warning("No submission table configured for form_id %s.", normalized_form_id)
+        return None
+    return config
+
+
 def _minor_authorization_jobs_table():
     table_name = os.getenv("MINOR_AUTHORIZATION_JOBS_TABLE_NAME")
     if not table_name:
@@ -98,16 +165,40 @@ def _decoded_body(event: dict[str, Any]) -> str:
     return body
 
 
-def _signature_storage_location(parsed_body: dict[str, Any], signature_url: str) -> tuple[str, str] | None:
-    bucket_name = os.getenv("SIGNATURES_BUCKET_NAME")
+def _slugify_storage_fragment(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", _normalized_question_key(value))
+    slug = slug.strip("-")
+    return slug or "file"
+
+
+def _is_youform_file_url(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    parsed = urlparse(value.strip())
+    return parsed.scheme in {"http", "https"} and parsed.netloc == "files.youform.com"
+
+
+def _file_storage_location(
+    parsed_body: dict[str, Any],
+    question: str,
+    file_url: str,
+    storage_config: dict[str, Any],
+) -> tuple[str, str] | None:
+    bucket_name = str(storage_config.get("bucket_name") or "").strip()
     submission_id = parsed_body.get("submission_id")
+    form_id = str(parsed_body.get("form_id") or "UNKNOWN_FORM")
     if not bucket_name or not submission_id:
         return None
-    parsed = urlparse(signature_url)
+    parsed = urlparse(file_url)
     extension = os.path.splitext(parsed.path)[1].lower()
     if not extension:
-        extension = ".png"
-    key = f"youform-signatures/{submission_id}/signature{extension}"
+        extension = ".bin"
+    if storage_config.get("preserve_signature_key") and question == SIGNATURE_QUESTION:
+        key = f"youform-signatures/{submission_id}/signature{extension}"
+        return bucket_name, key
+    storage_prefix = str(storage_config.get("storage_prefix") or f"youform-files/{form_id}").strip("/")
+    question_slug = _slugify_storage_fragment(question)
+    key = f"{storage_prefix}/{submission_id}/{question_slug}{extension}"
     return bucket_name, key
 
 
@@ -126,14 +217,19 @@ def _download_signature(signature_url: str) -> tuple[bytes, str | None]:
     return content, content_type
 
 
-def _store_signature(parsed_body: dict[str, Any], signature_url: str) -> str:
-    location = _signature_storage_location(parsed_body, signature_url)
+def _store_file_answer(
+    parsed_body: dict[str, Any],
+    question: str,
+    file_url: str,
+    storage_config: dict[str, Any],
+) -> str:
+    location = _file_storage_location(parsed_body, question, file_url, storage_config)
     if location is None:
-        raise RuntimeError("SIGNATURES_BUCKET_NAME and submission_id are required to store signatures.")
+        raise RuntimeError("A destination bucket and submission_id are required to store YouForm files.")
     bucket_name, key = location
-    content, content_type = _download_signature(signature_url)
+    content, content_type = _download_signature(file_url)
     if not content_type:
-        guessed, _ = mimetypes.guess_type(signature_url)
+        guessed, _ = mimetypes.guess_type(file_url)
         content_type = guessed or "application/octet-stream"
     _s3_client().put_object(
         Bucket=bucket_name,
@@ -141,24 +237,31 @@ def _store_signature(parsed_body: dict[str, Any], signature_url: str) -> str:
         Body=content,
         ContentType=content_type,
     )
-    logger.info("Stored YouForm signature for submission %s at s3://%s/%s", parsed_body.get("submission_id"), bucket_name, key)
+    logger.info(
+        "Stored YouForm file for submission %s question %s at s3://%s/%s",
+        parsed_body.get("submission_id"),
+        question,
+        bucket_name,
+        key,
+    )
     return f"s3://{bucket_name}/{key}"
 
 
-def _normalize_answers(parsed_body: dict[str, Any]) -> list[dict[str, Any]]:
+def _normalize_answers(parsed_body: dict[str, Any], storage_config: dict[str, Any]) -> list[dict[str, Any]]:
     answers = parsed_body.get("answers")
     if not isinstance(answers, dict):
         return []
     normalized: list[dict[str, Any]] = []
     for question, answer in answers.items():
         normalized_answer = answer
-        if str(question) == SIGNATURE_QUESTION and isinstance(answer, str) and answer.strip():
+        if _is_youform_file_url(answer) and storage_config.get("bucket_name"):
             try:
-                normalized_answer = _store_signature(parsed_body, answer.strip())
+                normalized_answer = _store_file_answer(parsed_body, str(question), answer.strip(), storage_config)
             except Exception:
                 logger.exception(
-                    "Failed to copy YouForm signature for submission %s. Keeping original URL.",
+                    "Failed to copy YouForm file for submission %s question %s. Keeping original URL.",
                     parsed_body.get("submission_id"),
+                    question,
                 )
         normalized.append({"question": str(question), "answer": normalized_answer})
     return normalized
@@ -229,7 +332,7 @@ def _build_keys(
     return keys
 
 
-def _build_submission_item(parsed_body: dict[str, Any]) -> dict[str, Any] | None:
+def _build_submission_item(parsed_body: dict[str, Any], storage_config: dict[str, Any]) -> dict[str, Any] | None:
     submission_id = parsed_body.get("submission_id")
     if not submission_id:
         return None
@@ -263,7 +366,7 @@ def _build_submission_item(parsed_body: dict[str, Any]) -> dict[str, Any] | None
         "eventbrite_event_url": event_metadata["eventbrite_event_url"],
         "event_date": event_date,
         "registration_email": registrant_email.lower().strip() if isinstance(registrant_email, str) else None,
-        "answers": _normalize_answers(parsed_body),
+        "answers": _normalize_answers(parsed_body, storage_config),
     }
     return {key: value for key, value in item.items() if value is not None}
 
@@ -358,11 +461,15 @@ def _reconcile_minor_authorization_job(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _store_submission(parsed_body: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
-    table_name = os.getenv("SUBMISSIONS_TABLE_NAME")
-    if not table_name:
-        logger.warning("SUBMISSIONS_TABLE_NAME is not configured; skipping persistence.")
+    storage_config = _storage_config_for_form(parsed_body.get("form_id"))
+    if storage_config is None:
+        logger.info(
+            "Skipping persistence because form_id %s is not configured for storage routing.",
+            parsed_body.get("form_id"),
+        )
         return False, None
-    item = _build_submission_item(parsed_body)
+    table_name = str(storage_config["table_name"])
+    item = _build_submission_item(parsed_body, storage_config)
     if item is None:
         logger.info("Skipping persistence because submission_id is missing.")
         return False, None
@@ -384,7 +491,9 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     if isinstance(parsed_body, dict):
         stored, item = _store_submission(parsed_body)
         if stored and item is not None:
-            reconciliation = _reconcile_minor_authorization_job(item)
+            storage_config = _storage_config_for_form(item.get("form_id"))
+            if storage_config and storage_config.get("reconcile_minor_authorization"):
+                reconciliation = _reconcile_minor_authorization_job(item)
 
     logger.info(
         "Received YouForm webhook: %s",

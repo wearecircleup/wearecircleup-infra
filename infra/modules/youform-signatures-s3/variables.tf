@@ -8,6 +8,12 @@ variable "common_tags" {
   type        = map(string)
 }
 
+variable "purpose_tag" {
+  description = "Purpose tag applied to the private bucket."
+  type        = string
+  default     = "youform-signatures"
+}
+
 variable "object_lock_retention_years" {
   description = "Default Object Lock retention period, in years, applied in COMPLIANCE mode to every stored signature."
   type        = number

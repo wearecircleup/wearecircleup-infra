@@ -80,30 +80,59 @@ module "youform_submissions_dynamodb" {
   common_tags = local.common_tags
 }
 
+module "youform_volunteer_intent_submissions_dynamodb" {
+  source = "../modules/youform-submissions-dynamodb"
+
+  table_name  = local.youform_volunteer_intent_table
+  common_tags = local.common_tags
+}
+
+module "youform_background_check_submissions_dynamodb" {
+  source = "../modules/youform-submissions-dynamodb"
+
+  table_name  = local.youform_background_check_table
+  common_tags = local.common_tags
+}
+
 module "youform_signatures_s3" {
   source = "../modules/youform-signatures-s3"
 
   bucket_name = local.youform_signatures_bucket
   common_tags = local.common_tags
+  purpose_tag = "youform-minor-authorization-files"
+}
+
+module "youform_background_check_files_s3" {
+  source = "../modules/youform-signatures-s3"
+
+  bucket_name = local.youform_background_check_bucket
+  common_tags = local.common_tags
+  purpose_tag = "youform-volunteer-background-check-files"
 }
 
 module "youform_webhook" {
   source = "../modules/youform-webhook"
 
-  api_name                            = local.youform_webhook_api
-  common_tags                         = local.common_tags
-  eventbrite_secret_arn               = module.secretsmanager_eventbrite.secret_arn
-  eventbrite_secret_name              = module.secretsmanager_eventbrite.secret_name
-  lambda_function_name                = local.youform_webhook_lambda
-  lambda_package_path                 = abspath("${path.root}/../artifacts/youform-webhook/youform_webhook_lambda.zip")
-  lambda_role_name                    = local.youform_webhook_role
-  route_path                          = local.youform_webhook_path
-  signatures_bucket_arn               = module.youform_signatures_s3.bucket_arn
-  signatures_bucket_name              = module.youform_signatures_s3.bucket_name
-  submissions_table_arn               = module.youform_submissions_dynamodb.table_arn
-  submissions_table_name              = module.youform_submissions_dynamodb.table_name
-  minor_authorization_jobs_table_arn  = module.minor_authorization_jobs_dynamodb.table_arn
-  minor_authorization_jobs_table_name = module.minor_authorization_jobs_dynamodb.table_name
+  api_name                                          = local.youform_webhook_api
+  common_tags                                       = local.common_tags
+  eventbrite_secret_arn                             = module.secretsmanager_eventbrite.secret_arn
+  eventbrite_secret_name                            = module.secretsmanager_eventbrite.secret_name
+  lambda_function_name                              = local.youform_webhook_lambda
+  lambda_package_path                               = abspath("${path.root}/../artifacts/youform-webhook/youform_webhook_lambda.zip")
+  lambda_role_name                                  = local.youform_webhook_role
+  route_path                                        = local.youform_webhook_path
+  signatures_bucket_arn                             = module.youform_signatures_s3.bucket_arn
+  signatures_bucket_name                            = module.youform_signatures_s3.bucket_name
+  submissions_table_arn                             = module.youform_submissions_dynamodb.table_arn
+  submissions_table_name                            = module.youform_submissions_dynamodb.table_name
+  minor_authorization_jobs_table_arn                = module.minor_authorization_jobs_dynamodb.table_arn
+  minor_authorization_jobs_table_name               = module.minor_authorization_jobs_dynamodb.table_name
+  volunteer_background_check_files_bucket_arn       = module.youform_background_check_files_s3.bucket_arn
+  volunteer_background_check_files_bucket_name      = module.youform_background_check_files_s3.bucket_name
+  volunteer_background_check_submissions_table_arn  = module.youform_background_check_submissions_dynamodb.table_arn
+  volunteer_background_check_submissions_table_name = module.youform_background_check_submissions_dynamodb.table_name
+  volunteer_intent_proposal_submissions_table_arn   = module.youform_volunteer_intent_submissions_dynamodb.table_arn
+  volunteer_intent_proposal_submissions_table_name  = module.youform_volunteer_intent_submissions_dynamodb.table_name
 }
 
 module "minor_authorization_validator" {

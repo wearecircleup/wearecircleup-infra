@@ -68,8 +68,8 @@ def test_store_submission_copies_signature_to_s3_persists_and_reconciles_job(mon
         },
     }
 
-    monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
-    monkeypatch.setenv("SIGNATURES_BUCKET_NAME", "test-signatures")
+    monkeypatch.setenv("MINOR_AUTHORIZATION_SUBMISSIONS_TABLE_NAME", "test-table")
+    monkeypatch.setenv("MINOR_AUTHORIZATION_FILES_BUCKET_NAME", "test-signatures")
     monkeypatch.setenv("MINOR_AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
     monkeypatch.setenv("AUTHORIZED_MINOR_FORM_ID", "iamr7tnj")
 
@@ -156,9 +156,10 @@ def test_store_submission_copies_signature_to_s3_persists_and_reconciles_job(mon
 
 
 def test_store_submission_skips_without_submission_id(monkeypatch):
-    monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
+    monkeypatch.setenv("AUTHORIZED_MINOR_FORM_ID", "iamr7tnj")
+    monkeypatch.setenv("MINOR_AUTHORIZATION_SUBMISSIONS_TABLE_NAME", "test-table")
 
-    stored, item = mod._store_submission({"answers": {"Nombre Completo": "Juan"}})
+    stored, item = mod._store_submission({"form_id": "iamr7tnj", "answers": {"Nombre Completo": "Juan"}})
 
     assert stored is False
     assert item is None
@@ -194,8 +195,8 @@ def test_store_submission_keeps_original_signature_url_when_copy_fails_and_no_jo
         },
     }
 
-    monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
-    monkeypatch.setenv("SIGNATURES_BUCKET_NAME", "test-signatures")
+    monkeypatch.setenv("MINOR_AUTHORIZATION_SUBMISSIONS_TABLE_NAME", "test-table")
+    monkeypatch.setenv("MINOR_AUTHORIZATION_FILES_BUCKET_NAME", "test-signatures")
     monkeypatch.setenv("MINOR_AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
     monkeypatch.setenv("AUTHORIZED_MINOR_FORM_ID", "iamr7tnj")
 
@@ -244,6 +245,79 @@ def test_store_submission_keeps_original_signature_url_when_copy_fails_and_no_jo
     assert reconciliation == {
         "reconciled": False,
         "reason": "no_matching_job",
+    }
+
+
+def test_background_check_form_routes_to_its_own_table_and_bucket(monkeypatch):
+    saved: dict[str, object] = {}
+    uploaded: dict[str, object] = {}
+
+    class FakeBackgroundTable:
+        def put_item(self, Item):
+            saved["Item"] = Item
+
+    class FakeS3:
+        def put_object(self, **kwargs):
+            uploaded.update(kwargs)
+
+    class FakeHeaders:
+        def get_content_type(self):
+            return "application/pdf"
+
+    class FakeResponse:
+        def __init__(self, content: bytes):
+            self._content = content
+            self.headers = FakeHeaders()
+
+        def read(self):
+            return self._content
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+    parsed_body = {
+        "submission_id": "bg-1",
+        "form_id": "dpaadbok",
+        "form_name": "Volunteer Background Check Compliance",
+        "event_type": "submission",
+        "completed_at": "2026-08-08T10:00:00.000000Z",
+        "answers": {
+            "Documento": "https://files.youform.com/background-check.pdf",
+        },
+    }
+
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID", "dpaadbok")
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_SUBMISSIONS_TABLE_NAME", "background-table")
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_FILES_BUCKET_NAME", "background-bucket")
+
+    def fake_dynamodb_table(table_name: str):
+        if table_name == "background-table":
+            return FakeBackgroundTable()
+        raise AssertionError(f"Unexpected table: {table_name}")
+
+    monkeypatch.setattr(mod, "_dynamodb_table", fake_dynamodb_table)
+    monkeypatch.setattr(mod, "_s3_client", lambda: FakeS3())
+    monkeypatch.setattr(mod, "urlopen", lambda request, timeout=20: FakeResponse(b"pdf-binary"))
+
+    stored, item = mod._store_submission(parsed_body)
+
+    assert stored is True
+    assert item["form_id"] == "dpaadbok"
+    assert saved["Item"]["submission_id"] == "bg-1"
+    assert saved["Item"]["answers"] == [
+        {
+            "question": "Documento",
+            "answer": "s3://background-bucket/volunteer-background-checks/dpaadbok/bg-1/documento.pdf",
+        }
+    ]
+    assert uploaded == {
+        "Bucket": "background-bucket",
+        "Key": "volunteer-background-checks/dpaadbok/bg-1/documento.pdf",
+        "Body": b"pdf-binary",
+        "ContentType": "application/pdf",
     }
 
 

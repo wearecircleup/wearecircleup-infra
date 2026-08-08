@@ -32,7 +32,10 @@ locals {
   youform_webhook_role                 = "wearecircleup-prod-youform-webhook-role"
   youform_webhook_path                 = "/webhooks/youform"
   youform_webhook_table                = "wearecircleup-prod-youform-submissions"
+  youform_volunteer_intent_table       = "wearecircleup-prod-youform-volunteer-intent-proposals"
+  youform_background_check_table       = "wearecircleup-prod-youform-volunteer-background-checks"
   youform_signatures_bucket            = "wearecircleup-prod-youform-signatures-311923415472-us-east-1"
+  youform_background_check_bucket      = "wearecircleup-prod-youform-background-check-files-311923415472-us-east-1"
 
   common_tags = {
     ManagedBy   = "terraform"

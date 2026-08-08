@@ -39,22 +39,22 @@ variable "route_path" {
 }
 
 variable "signatures_bucket_arn" {
-  description = "S3 bucket ARN used to store copied signature images."
+  description = "Private S3 bucket ARN used to store minor-authorization files."
   type        = string
 }
 
 variable "signatures_bucket_name" {
-  description = "S3 bucket name used to store copied signature images."
+  description = "Private S3 bucket name used to store minor-authorization files."
   type        = string
 }
 
 variable "submissions_table_arn" {
-  description = "DynamoDB table ARN used to store normalized YouForm submissions."
+  description = "DynamoDB table ARN used to store minor-authorization YouForm submissions."
   type        = string
 }
 
 variable "submissions_table_name" {
-  description = "DynamoDB table name used to store normalized YouForm submissions."
+  description = "DynamoDB table name used to store minor-authorization YouForm submissions."
   type        = string
 }
 
@@ -65,5 +65,35 @@ variable "minor_authorization_jobs_table_arn" {
 
 variable "minor_authorization_jobs_table_name" {
   description = "DynamoDB table name used to reconcile minor authorization jobs."
+  type        = string
+}
+
+variable "volunteer_background_check_files_bucket_arn" {
+  description = "Private S3 bucket ARN used to store copied YouForm background-check files."
+  type        = string
+}
+
+variable "volunteer_background_check_files_bucket_name" {
+  description = "Private S3 bucket name used to store copied YouForm background-check files."
+  type        = string
+}
+
+variable "volunteer_background_check_submissions_table_arn" {
+  description = "DynamoDB table ARN used to store volunteer background-check submissions."
+  type        = string
+}
+
+variable "volunteer_background_check_submissions_table_name" {
+  description = "DynamoDB table name used to store volunteer background-check submissions."
+  type        = string
+}
+
+variable "volunteer_intent_proposal_submissions_table_arn" {
+  description = "DynamoDB table ARN used to store volunteer intent proposal submissions."
+  type        = string
+}
+
+variable "volunteer_intent_proposal_submissions_table_name" {
+  description = "DynamoDB table name used to store volunteer intent proposal submissions."
   type        = string
 }

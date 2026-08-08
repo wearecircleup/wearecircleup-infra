@@ -38,6 +38,8 @@ resource "aws_iam_role_policy" "dynamodb" {
         ]
         Resource = [
           var.submissions_table_arn,
+          var.volunteer_intent_proposal_submissions_table_arn,
+          var.volunteer_background_check_submissions_table_arn,
           var.minor_authorization_jobs_table_arn,
           "${var.minor_authorization_jobs_table_arn}/index/*"
         ]
@@ -59,7 +61,8 @@ resource "aws_iam_role_policy" "s3_signatures" {
           "s3:PutObject"
         ]
         Resource = [
-          "${var.signatures_bucket_arn}/*"
+          "${var.signatures_bucket_arn}/*",
+          "${var.volunteer_background_check_files_bucket_arn}/*"
         ]
       }
     ]
@@ -106,10 +109,13 @@ resource "aws_lambda_function" "this" {
 
   environment {
     variables = {
-      SUBMISSIONS_TABLE_NAME              = var.submissions_table_name
-      SIGNATURES_BUCKET_NAME              = var.signatures_bucket_name
-      MINOR_AUTHORIZATION_JOBS_TABLE_NAME = var.minor_authorization_jobs_table_name
-      EVENTBRITE_SECRET_ID                = var.eventbrite_secret_name
+      MINOR_AUTHORIZATION_SUBMISSIONS_TABLE_NAME        = var.submissions_table_name
+      MINOR_AUTHORIZATION_FILES_BUCKET_NAME             = var.signatures_bucket_name
+      VOLUNTEER_INTENT_PROPOSAL_SUBMISSIONS_TABLE_NAME  = var.volunteer_intent_proposal_submissions_table_name
+      VOLUNTEER_BACKGROUND_CHECK_SUBMISSIONS_TABLE_NAME = var.volunteer_background_check_submissions_table_name
+      VOLUNTEER_BACKGROUND_CHECK_FILES_BUCKET_NAME      = var.volunteer_background_check_files_bucket_name
+      MINOR_AUTHORIZATION_JOBS_TABLE_NAME               = var.minor_authorization_jobs_table_name
+      EVENTBRITE_SECRET_ID                              = var.eventbrite_secret_name
     }
   }
 
