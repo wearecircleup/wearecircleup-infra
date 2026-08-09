@@ -36,16 +36,32 @@ resource "aws_dynamodb_table" "this" {
 
   global_secondary_index {
     name            = "gsi1"
-    hash_key        = "gsi1pk"
-    range_key       = "gsi1sk"
     projection_type = "ALL"
+
+    key_schema {
+      attribute_name = "gsi1pk"
+      key_type       = "HASH"
+    }
+
+    key_schema {
+      attribute_name = "gsi1sk"
+      key_type       = "RANGE"
+    }
   }
 
   global_secondary_index {
     name            = "gsi2"
-    hash_key        = "gsi2pk"
-    range_key       = "gsi2sk"
     projection_type = "ALL"
+
+    key_schema {
+      attribute_name = "gsi2pk"
+      key_type       = "HASH"
+    }
+
+    key_schema {
+      attribute_name = "gsi2sk"
+      key_type       = "RANGE"
+    }
   }
 
   point_in_time_recovery {
