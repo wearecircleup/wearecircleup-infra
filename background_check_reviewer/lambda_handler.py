@@ -219,6 +219,14 @@ def _review_item_key(form_id: Any, submission_id: Any, document_kind: str) -> di
     }
 
 
+def _background_check_partition_key(submission_id: Any, document_number: Any) -> str | None:
+    normalized_submission_id = str(submission_id or "").strip()
+    normalized_document_number = _normalized_digits(document_number)
+    if not normalized_submission_id or not normalized_document_number:
+        return None
+    return f"SUBMISSION#{normalized_submission_id}#DOCUMENT#{normalized_document_number}"
+
+
 def _get_review_item(form_id: Any, submission_id: Any, document_kind: str) -> dict[str, Any] | None:
     response = _reviews_table().get_item(Key=_review_item_key(form_id, submission_id, document_kind))
     return response.get("Item")
@@ -668,6 +676,7 @@ def _final_review_summary(form_id: Any, submission_id: Any) -> dict[str, Any] | 
         "resolved_document_number": resolved_number,
         "resolved_full_name": resolved_name,
         "resolved_full_name_source": resolved_name_source,
+        "partition_key": _background_check_partition_key(submission_id, resolved_number or cedula_identity.get("document_number")),
         "judicial_validation_status": (judicial_item or {}).get("validation_status"),
         "inhabilidades_validation_status": (inhabilidades_item or {}).get("validation_status"),
         "judicial_consultation_datetime_text": (judicial_item or {}).get("consultation_datetime_text"),
@@ -801,19 +810,18 @@ def _build_background_check_internal_review_url(summary_item: dict[str, Any]) ->
     if not isinstance(errors, list):
         errors = [str(errors)]
     params = {
-        "contact.first_name": summary_item.get("identity_first_names"),
-        "contact.last_name": summary_item.get("identity_last_names"),
         "contact.email": summary_item.get("contact_email") or summary_item.get("registration_email"),
         "contact.phone_number": summary_item.get("contact_phone"),
         "document_type": _review_payload_field(summary_item, "document_type"),
-        "document_number": summary_item.get("resolved_document_number") or summary_item.get("identity_document_number"),
+        "date_of_birth": _review_payload_field(summary_item, "fecha_nacimiento"),
+        "place_of_birth": _review_payload_field(summary_item, "lugar_nacimiento"),
+        "nationality": _review_payload_field(summary_item, "nacionalidad"),
         "full_name": summary_item.get("resolved_full_name") or summary_item.get("identity_full_name"),
         "judicial_result": judicial_detail.get("required_phrase"),
         "judicial_datetime": summary_item.get("judicial_consultation_datetime_text"),
         "inhabilidades_result": inhabilidades_detail.get("required_phrase"),
         "inhabilidades_datetime": summary_item.get("inhabilidades_consultation_datetime_text"),
-        "form_id": summary_item.get("form_id"),
-        "submission_id": summary_item.get("submission_id"),
+        "partition_key": summary_item.get("partition_key"),
         "final_review_status": summary_item.get("final_review_status"),
         "final_review_errors": ",".join(str(error) for error in errors if error),
         "resolved_document_number": summary_item.get("resolved_document_number"),

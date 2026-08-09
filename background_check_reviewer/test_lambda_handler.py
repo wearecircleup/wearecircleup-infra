@@ -361,21 +361,24 @@ def test_build_background_check_internal_review_url_includes_prefilled_values(mo
     monkeypatch.setenv("BACKGROUND_CHECK_INTERNAL_REVIEW_FORM_URL", "https://app.youform.com/forms/p35vzbna")
 
     summary_item = {
-        "form_id": "dpaadbok",
         "submission_id": "qxxcnbmtd1",
-        "contact_email": "napoleonbonaparte@gmail.com",
+        "contact_email": "gocircleup@gmail.com",
         "contact_phone": "+573194477859",
-        "identity_first_names": "DANIEL NICOLAS",
-        "identity_last_names": "DIAZ MUNEVAR",
         "identity_document_number": "1020802674",
         "resolved_document_number": "1020802674",
         "resolved_full_name": "DIAZ MUNEVAR DANIEL NICOLAS",
+        "partition_key": "SUBMISSION#qxxcnbmtd1#DOCUMENT#1020802674",
         "final_review_status": "approved",
         "final_review_errors": ["nombre_no_coincide", "fecha_vencida"],
         "judicial_consultation_datetime_text": "08:13:16 AM 09/08/2026",
         "inhabilidades_consultation_datetime_text": "08:11:56 09/08/2026",
         "review_payload": {
             "document_type": "cedula_pre_2020",
+            "fields": {
+                "fecha_nacimiento": {"value": "1994-11-03", "confidence": "confiable"},
+                "lugar_nacimiento": {"value": "Bogota", "confidence": "confiable"},
+                "nacionalidad": {"value": "Colombiana", "confidence": "confiable"},
+            },
         },
         "final_review_details": {
             "antecedentes_judiciales": {
@@ -390,11 +393,21 @@ def test_build_background_check_internal_review_url_includes_prefilled_values(mo
     url = mod._build_background_check_internal_review_url(summary_item)
 
     assert url.startswith("https://app.youform.com/forms/p35vzbna?")
-    assert "contact.first_name=DANIEL+NICOLAS" in url
-    assert "contact.last_name=DIAZ+MUNEVAR" in url
-    assert "document_number=1020802674" in url
+    assert "contact.email=gocircleup%40gmail.com" in url
+    assert "contact.phone_number=%2B573194477859" in url
+    assert "date_of_birth=1994-11-03" in url
+    assert "place_of_birth=Bogota" in url
+    assert "nationality=Colombiana" in url
+    assert "partition_key=SUBMISSION%23qxxcnbmtd1%23DOCUMENT%231020802674" in url
     assert "final_review_status=approved" in url
     assert "final_review_errors=nombre_no_coincide%2Cfecha_vencida" in url
+    assert "resolved_document_number=1020802674" in url
+    assert "resolved_full_name=DIAZ+MUNEVAR+DANIEL+NICOLAS" in url
+    assert "contact.first_name=" not in url
+    assert "contact.last_name=" not in url
+    assert "&document_number=" not in url
+    assert "form_id=" not in url
+    assert "submission_id=" not in url
 
 
 def test_should_not_resend_background_check_notification_for_same_fingerprint():
