@@ -160,6 +160,22 @@ def _normalized_digits(value: Any) -> str:
     return "".join(character for character in value if character.isdigit())
 
 
+def _normalize_iso_date(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    iso_match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", cleaned)
+    if iso_match:
+        return cleaned
+    slash_match = re.search(r"\b(\d{2})/(\d{2})/(\d{4})\b", cleaned)
+    if slash_match:
+        day, month, year = slash_match.groups()
+        return f"{year}-{month}-{day}"
+    return None
+
+
 def _levenshtein_distance(left: str, right: str) -> int:
     if left == right:
         return 0
@@ -662,25 +678,30 @@ def _final_review_summary(form_id: Any, submission_id: Any) -> dict[str, Any] | 
         resolved_name_source = "cedula" if resolved_name else None
 
     if cedula_item.get("validation_status") != "valid" or invalid_documents:
-        final_review_status = "rejected"
+        final_review_status = "REJECTED"
     elif missing_documents:
-        final_review_status = "pending_documents"
+        final_review_status = "PENDING_DOCUMENTS"
     else:
-        final_review_status = "approved"
+        final_review_status = "APPROVED"
+
+    partition_key = _background_check_partition_key(submission_id, resolved_number or cedula_identity.get("document_number"))
+    normalized_errors = sorted(set(str(error).upper() for error in errors if error))
 
     return {
         "pk": f"FORM#{form_id or 'UNKNOWN_FORM'}",
         "sk": f"SUBMISSION#{submission_id or 'UNKNOWN_SUBMISSION'}#DOCUMENT#cedula",
         "final_review_status": final_review_status,
-        "final_review_errors": sorted(set(error for error in errors if error)),
+        "final_review_errors": normalized_errors,
         "resolved_document_number": resolved_number,
         "resolved_full_name": resolved_name,
         "resolved_full_name_source": resolved_name_source,
-        "partition_key": _background_check_partition_key(submission_id, resolved_number or cedula_identity.get("document_number")),
+        "partition_key": partition_key,
         "judicial_validation_status": (judicial_item or {}).get("validation_status"),
         "inhabilidades_validation_status": (inhabilidades_item or {}).get("validation_status"),
         "judicial_consultation_datetime_text": (judicial_item or {}).get("consultation_datetime_text"),
         "inhabilidades_consultation_datetime_text": (inhabilidades_item or {}).get("consultation_datetime_text"),
+        "gsi4pk": f"PARTITION_KEY#{partition_key}" if partition_key else None,
+        "gsi4sk": f"FORM#{form_id or 'UNKNOWN_FORM'}#SUBMISSION#{submission_id or 'UNKNOWN_SUBMISSION'}" if partition_key else None,
         "final_review_details": {
             key: _review_details_snapshot(value)
             for key, value in (
@@ -778,7 +799,7 @@ def _review_payload_field(summary_item: dict[str, Any], field_name: str) -> str 
         return None
     if field_name == "document_type":
         value = payload.get("document_type")
-        return str(value).strip() if isinstance(value, str) and value.strip() else None
+        return str(value).strip().upper() if isinstance(value, str) and value.strip() else None
     fields = payload.get("fields")
     if not isinstance(fields, dict):
         return None
@@ -813,14 +834,14 @@ def _build_background_check_internal_review_url(summary_item: dict[str, Any]) ->
         "contact.email": summary_item.get("contact_email") or summary_item.get("registration_email"),
         "contact.phone_number": summary_item.get("contact_phone"),
         "document_type": _review_payload_field(summary_item, "document_type"),
-        "date_of_birth": _review_payload_field(summary_item, "fecha_nacimiento"),
+        "date_of_birth": _normalize_iso_date(_review_payload_field(summary_item, "fecha_nacimiento")),
         "place_of_birth": _review_payload_field(summary_item, "lugar_nacimiento"),
         "nationality": _review_payload_field(summary_item, "nacionalidad"),
         "full_name": summary_item.get("resolved_full_name") or summary_item.get("identity_full_name"),
         "judicial_result": judicial_detail.get("required_phrase"),
-        "judicial_datetime": summary_item.get("judicial_consultation_datetime_text"),
+        "judicial_date": _normalize_iso_date(summary_item.get("judicial_consultation_datetime_text")),
         "inhabilidades_result": inhabilidades_detail.get("required_phrase"),
-        "inhabilidades_datetime": summary_item.get("inhabilidades_consultation_datetime_text"),
+        "inhabilidades_date": _normalize_iso_date(summary_item.get("inhabilidades_consultation_datetime_text")),
         "partition_key": summary_item.get("partition_key"),
         "final_review_status": summary_item.get("final_review_status"),
         "final_review_errors": ",".join(str(error) for error in errors if error),
@@ -838,7 +859,7 @@ def _build_background_check_admin_email(summary_item: dict[str, Any]) -> tuple[s
     subject = f"Revision final de antecedentes: {summary_item.get('final_review_status') or 'pendiente'}"
     support_url = _background_check_notification_support_url()
     logo_url = _background_check_notification_logo_url()
-    final_status = str(summary_item.get("final_review_status") or "pending").replace("_", " ")
+    final_status = str(summary_item.get("final_review_status") or "PENDING").replace("_", " ")
     judicial_status = str(summary_item.get("judicial_validation_status") or "pending_reference").replace("_", " ")
     inhabilidades_status = str(summary_item.get("inhabilidades_validation_status") or "pending_reference").replace("_", " ")
     errors = summary_item.get("final_review_errors") or []
@@ -942,7 +963,7 @@ def _build_background_check_admin_email(summary_item: dict[str, Any]) -> tuple[s
 
 
 def _should_send_background_check_admin_notification(summary_item: dict[str, Any]) -> bool:
-    if summary_item.get("final_review_status") not in {"approved", "rejected"}:
+    if summary_item.get("final_review_status") not in {"APPROVED", "REJECTED"}:
         return False
     fingerprint = _background_check_notification_fingerprint(summary_item)
     return not (

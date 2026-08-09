@@ -351,10 +351,12 @@ def test_final_review_summary_prefers_certificate_name_when_certificates_agree(m
     summary = mod._final_review_summary("dpaadbok", "sub-1")
 
     assert summary is not None
-    assert summary["final_review_status"] == "approved"
+    assert summary["final_review_status"] == "APPROVED"
     assert summary["resolved_document_number"] == "1020802674"
     assert summary["resolved_full_name"] == "BONAPARTE NAPOLEON"
     assert summary["resolved_full_name_source"] == "certificates"
+    assert summary["partition_key"] == "SUBMISSION#sub-1#DOCUMENT#1020802674"
+    assert summary["gsi4pk"] == "PARTITION_KEY#SUBMISSION#sub-1#DOCUMENT#1020802674"
 
 
 def test_build_background_check_internal_review_url_includes_prefilled_values(monkeypatch):
@@ -368,14 +370,14 @@ def test_build_background_check_internal_review_url_includes_prefilled_values(mo
         "resolved_document_number": "1020802674",
         "resolved_full_name": "DIAZ MUNEVAR DANIEL NICOLAS",
         "partition_key": "SUBMISSION#qxxcnbmtd1#DOCUMENT#1020802674",
-        "final_review_status": "approved",
-        "final_review_errors": ["nombre_no_coincide", "fecha_vencida"],
+        "final_review_status": "APPROVED",
+        "final_review_errors": ["NOMBRE_NO_COINCIDE", "FECHA_VENCIDA"],
         "judicial_consultation_datetime_text": "08:13:16 AM 09/08/2026",
         "inhabilidades_consultation_datetime_text": "08:11:56 09/08/2026",
         "review_payload": {
             "document_type": "cedula_pre_2020",
             "fields": {
-                "fecha_nacimiento": {"value": "1994-11-03", "confidence": "confiable"},
+                "fecha_nacimiento": {"value": "03/11/1994", "confidence": "confiable"},
                 "lugar_nacimiento": {"value": "Bogota", "confidence": "confiable"},
                 "nacionalidad": {"value": "Colombiana", "confidence": "confiable"},
             },
@@ -395,12 +397,15 @@ def test_build_background_check_internal_review_url_includes_prefilled_values(mo
     assert url.startswith("https://app.youform.com/forms/p35vzbna?")
     assert "contact.email=gocircleup%40gmail.com" in url
     assert "contact.phone_number=%2B573194477859" in url
+    assert "document_type=CEDULA_PRE_2020" in url
     assert "date_of_birth=1994-11-03" in url
     assert "place_of_birth=Bogota" in url
     assert "nationality=Colombiana" in url
     assert "partition_key=SUBMISSION%23qxxcnbmtd1%23DOCUMENT%231020802674" in url
-    assert "final_review_status=approved" in url
-    assert "final_review_errors=nombre_no_coincide%2Cfecha_vencida" in url
+    assert "final_review_status=APPROVED" in url
+    assert "final_review_errors=NOMBRE_NO_COINCIDE%2CFECHA_VENCIDA" in url
+    assert "judicial_date=2026-08-09" in url
+    assert "inhabilidades_date=2026-08-09" in url
     assert "resolved_document_number=1020802674" in url
     assert "resolved_full_name=DIAZ+MUNEVAR+DANIEL+NICOLAS" in url
     assert "contact.first_name=" not in url
@@ -408,12 +413,14 @@ def test_build_background_check_internal_review_url_includes_prefilled_values(mo
     assert "&document_number=" not in url
     assert "form_id=" not in url
     assert "submission_id=" not in url
+    assert "judicial_datetime=" not in url
+    assert "inhabilidades_datetime=" not in url
 
 
 def test_should_not_resend_background_check_notification_for_same_fingerprint():
     summary_item = {
-        "final_review_status": "approved",
-        "final_review_errors": ["nombre_no_coincide"],
+        "final_review_status": "APPROVED",
+        "final_review_errors": ["NOMBRE_NO_COINCIDE"],
         "resolved_document_number": "1020802674",
         "resolved_full_name": "DIAZ MUNEVAR DANIEL NICOLAS",
         "internal_review_notification_status": "sent",
