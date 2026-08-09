@@ -19,7 +19,7 @@ pytestmark = pytest.mark.live
 def test_real_checkout_registrations_are_visible_without_checkin() -> None:
     event_id = os.getenv("EVENTBRITE_ATTENDEE_EVENT_ID")
     assert event_id, "Set EVENTBRITE_ATTENDEE_EVENT_ID to the published test event."
-    expected = {"danielnicolasmuner@gmail.com", "gocircleup@gmail.com"}
+    expected = {"napoleonbonaparte@gmail.com", "gocircleup@gmail.com"}
 
     with TestClient(app) as client:
         response = client.get(f"/events/{event_id}/attendees", params={"page": 1})

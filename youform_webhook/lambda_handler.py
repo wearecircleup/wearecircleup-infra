@@ -549,7 +549,7 @@ def _build_volunteer_intent_whatsapp_url(item: dict[str, Any]) -> str | None:
     )
     message = (
         f"Hola {contact_name}, recibí tu propuesta sobre {event_name} con fecha tentativa {requested_date}. "
-        "Gracias por compartirla. Mi nombre es Daniel, no soy un bot respondiendo automáticamente. "
+        "Gracias por compartirla. Mi nombre es Napoleon, no soy un bot respondiendo automáticamente. "
         "Me gustaría saber si ya tienes un lugar pensado y un aforo. La idea es empezar con 3-4 personas y, "
         "si es posible, tener una llamada de 15 min o menos para resolver dudas o explicar algunos detalles."
     )
@@ -833,7 +833,7 @@ def _build_volunteer_intent_whatsapp_url(item: dict[str, Any]) -> str | None:
     )
     message = (
         f"Hola {contact_name}, recibí tu propuesta sobre *{event_name}*, con fecha tentativa {requested_date}. "
-        "Gracias por compartirla. Mi nombre es Daniel, no soy un bot respondiendo automáticamente. "
+        "Gracias por compartirla. Mi nombre es Napoleon, no soy un bot respondiendo automáticamente. "
         "Me gustaría saber si ya tienes un lugar pensado y un aforo. La idea es empezar con 3-4 personas y, "
         "si es posible, tener una llamada de 15 min o menos, para resolver dudas o explicar algunos detalles. "
         "No dudes en escribir a este número cualquier duda; un mensaje de voz también está perfecto."

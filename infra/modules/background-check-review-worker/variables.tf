@@ -63,6 +63,31 @@ variable "eventbrite_secret_name" {
   type        = string
 }
 
+variable "background_check_notification_from_email" {
+  description = "SES From address used for internal background-check review notifications."
+  type        = string
+}
+
+variable "background_check_notification_to_email" {
+  description = "Comma-separated admin recipients for internal background-check review notifications."
+  type        = string
+}
+
+variable "background_check_notification_reply_to_email" {
+  description = "Reply-to email used for internal background-check review notifications."
+  type        = string
+}
+
+variable "background_check_notification_logo_url" {
+  description = "Public logo URL rendered in the internal background-check review notification."
+  type        = string
+}
+
+variable "background_check_internal_review_form_url" {
+  description = "Internal YouForm URL used to review final background-check decisions."
+  type        = string
+}
+
 variable "lambda_timeout_seconds" {
   description = "Lambda timeout in seconds."
   type        = number

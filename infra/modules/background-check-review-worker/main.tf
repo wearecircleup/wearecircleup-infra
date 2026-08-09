@@ -149,6 +149,24 @@ resource "aws_iam_role_policy" "textract" {
   })
 }
 
+resource "aws_iam_role_policy" "ses" {
+  name = "${var.lambda_function_name}-ses"
+  role = aws_iam_role.lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ses:SendEmail"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.lambda_function_name}"
   retention_in_days = 14
@@ -169,13 +187,19 @@ resource "aws_lambda_function" "this" {
 
   environment {
     variables = {
-      EVENTBRITE_SECRET_ID                    = var.eventbrite_secret_name
-      BACKGROUND_CHECK_SUBMISSIONS_TABLE_NAME = var.background_check_submissions_table_name
-      BACKGROUND_CHECK_REVIEWS_TABLE_NAME     = var.background_check_reviews_table_name
-      BACKGROUND_CHECK_FILES_BUCKET_NAME      = var.background_check_files_bucket_name
-      BACKGROUND_CHECK_MODEL_ID_SECRET_KEY    = "BEDROCK_MODEL_ID"
-      BACKGROUND_CHECK_FORM_ID_SECRET_KEY     = "VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID"
-      BACKGROUND_CHECK_REVIEW_MAX_PAGES       = "2"
+      EVENTBRITE_SECRET_ID                         = var.eventbrite_secret_name
+      BACKGROUND_CHECK_SUBMISSIONS_TABLE_NAME      = var.background_check_submissions_table_name
+      BACKGROUND_CHECK_REVIEWS_TABLE_NAME          = var.background_check_reviews_table_name
+      BACKGROUND_CHECK_FILES_BUCKET_NAME           = var.background_check_files_bucket_name
+      BACKGROUND_CHECK_MODEL_ID_SECRET_KEY         = "BEDROCK_MODEL_ID"
+      BACKGROUND_CHECK_FORM_ID_SECRET_KEY          = "VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID"
+      BACKGROUND_CHECK_REVIEW_MAX_PAGES            = "2"
+      BACKGROUND_CHECK_NOTIFICATION_FROM_EMAIL     = var.background_check_notification_from_email
+      BACKGROUND_CHECK_NOTIFICATION_TO_EMAIL       = var.background_check_notification_to_email
+      BACKGROUND_CHECK_NOTIFICATION_REPLY_TO_EMAIL = var.background_check_notification_reply_to_email
+      BACKGROUND_CHECK_NOTIFICATION_LOGO_URL       = var.background_check_notification_logo_url
+      BACKGROUND_CHECK_INTERNAL_REVIEW_FORM_URL    = var.background_check_internal_review_form_url
+      BACKGROUND_CHECK_NOTIFICATION_SUPPORT_URL    = "https://circleup.com.co"
     }
   }
 

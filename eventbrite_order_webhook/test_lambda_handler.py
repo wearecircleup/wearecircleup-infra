@@ -29,8 +29,8 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
                 "status": "placed",
                 "created": "2026-08-03T15:23:52Z",
                 "changed": "2026-08-03T15:24:04Z",
-                "name": "Nicolas CircleUp",
-                "first_name": "Nicolas",
+                "name": "Napoleon CircleUp",
+                "first_name": "Napoleon",
                 "last_name": "CircleUp",
                 "email": "gocircleup@gmail.com",
             }
@@ -74,8 +74,8 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
                         "quantity": 1,
                         "delivery_method": "electronic",
                         "profile": {
-                            "name": "Nicolas CircleUp",
-                            "first_name": "Nicolas",
+                            "name": "Napoleon CircleUp",
+                            "first_name": "Napoleon",
                             "last_name": "CircleUp",
                             "email": "gocircleup@gmail.com",
                         },
@@ -161,8 +161,8 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
         "order_changed": "2026-08-03T15:24:04Z",
         "attendee_count": 1,
         "buyer": {
-            "name": "Nicolas CircleUp",
-            "first_name": "Nicolas",
+            "name": "Napoleon CircleUp",
+            "first_name": "Napoleon",
             "last_name": "CircleUp",
             "email": "gocircleup@gmail.com",
         },
@@ -182,8 +182,8 @@ def test_store_order_submission_saves_minimal_order_shape(monkeypatch):
                 "quantity": 1,
                 "delivery_method": "electronic",
                 "profile": {
-                    "name": "Nicolas CircleUp",
-                    "first_name": "Nicolas",
+                    "name": "Napoleon CircleUp",
+                    "first_name": "Napoleon",
                     "last_name": "CircleUp",
                     "email": "gocircleup@gmail.com",
                 },

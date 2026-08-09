@@ -501,8 +501,8 @@ def test_volunteer_intent_submission_uses_form_keys_and_contact_indexes(monkeypa
             "¿Qué día te gustaría que fuera el evento?": "2026-08-12",
             "¿A qué hora?": "8:00 p.m.",
             "¿Tienes alguna pregunta para nosotros?": "No",
-            "Nombre": "Nicolas Diaz",
-            "Correo": "danielnicolasmuner@gmail.com",
+            "Nombre": "Napoleon Bonaparte",
+            "Correo": "napoleonbonaparte@gmail.com",
             "Teléfono": "+573211231212",
         },
     }
@@ -523,9 +523,9 @@ def test_volunteer_intent_submission_uses_form_keys_and_contact_indexes(monkeypa
     assert item["pk"] == "FORM#46titbii"
     assert item["sk"] == "SUBMISSION#ahcscgfgka"
     assert item["gsi1pk"] == "FORM#46titbii"
-    assert item["gsi2pk"] == "EMAIL#danielnicolasmuner@gmail.com"
+    assert item["gsi2pk"] == "EMAIL#napoleonbonaparte@gmail.com"
     assert item["gsi3pk"] == "PHONE#+573211231212"
-    assert item["contact_email"] == "danielnicolasmuner@gmail.com"
+    assert item["contact_email"] == "napoleonbonaparte@gmail.com"
     assert item["contact_phone"] == "+573211231212"
     assert item["proposal_event_name"] == "El arte de escuchar"
     assert saved["Item"]["pk"] == "FORM#46titbii"
@@ -560,8 +560,8 @@ def test_handler_sends_volunteer_intent_admin_notification(monkeypatch):
             "¿Qué día te gustaría que fuera el evento?": "2026-08-12",
             "¿A qué hora?": "8:00 p.m.",
             "¿Tienes alguna pregunta para nosotros?": "No",
-            "Nombre": "Nicolas Diaz",
-            "Correo": "danielnicolasmuner@gmail.com",
+            "Nombre": "Napoleon Bonaparte",
+            "Correo": "napoleonbonaparte@gmail.com",
             "Teléfono": "+573211231212",
         },
     }

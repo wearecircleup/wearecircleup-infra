@@ -159,19 +159,24 @@ module "youform_webhook" {
 module "background_check_review_worker" {
   source = "../modules/background-check-review-worker"
 
-  common_tags                             = local.common_tags
-  lambda_function_name                    = local.background_check_reviewer_lambda
-  lambda_package_path                     = abspath("${path.root}/../artifacts/background-check-reviewer/background_check_reviewer_lambda.zip")
-  lambda_role_name                        = local.background_check_reviewer_role
-  queue_arn                               = module.background_check_review_sqs.queue_arn
-  background_check_submissions_table_arn  = module.youform_background_check_submissions_dynamodb.table_arn
-  background_check_submissions_table_name = module.youform_background_check_submissions_dynamodb.table_name
-  background_check_reviews_table_arn      = module.background_check_reviews_dynamodb.table_arn
-  background_check_reviews_table_name     = module.background_check_reviews_dynamodb.table_name
-  background_check_files_bucket_arn       = module.youform_background_check_files_s3.bucket_arn
-  background_check_files_bucket_name      = module.youform_background_check_files_s3.bucket_name
-  eventbrite_secret_arn                   = module.secretsmanager_eventbrite.secret_arn
-  eventbrite_secret_name                  = module.secretsmanager_eventbrite.secret_name
+  common_tags                                  = local.common_tags
+  lambda_function_name                         = local.background_check_reviewer_lambda
+  lambda_package_path                          = abspath("${path.root}/../artifacts/background-check-reviewer/background_check_reviewer_lambda.zip")
+  lambda_role_name                             = local.background_check_reviewer_role
+  queue_arn                                    = module.background_check_review_sqs.queue_arn
+  background_check_submissions_table_arn       = module.youform_background_check_submissions_dynamodb.table_arn
+  background_check_submissions_table_name      = module.youform_background_check_submissions_dynamodb.table_name
+  background_check_reviews_table_arn           = module.background_check_reviews_dynamodb.table_arn
+  background_check_reviews_table_name          = module.background_check_reviews_dynamodb.table_name
+  background_check_files_bucket_arn            = module.youform_background_check_files_s3.bucket_arn
+  background_check_files_bucket_name           = module.youform_background_check_files_s3.bucket_name
+  eventbrite_secret_arn                        = module.secretsmanager_eventbrite.secret_arn
+  eventbrite_secret_name                       = module.secretsmanager_eventbrite.secret_name
+  background_check_notification_from_email     = local.background_check_notification_sender
+  background_check_notification_to_email       = local.background_check_notification_to
+  background_check_notification_reply_to_email = local.background_check_notification_reply
+  background_check_notification_logo_url       = local.background_check_notification_logo
+  background_check_internal_review_form_url    = local.background_check_internal_review_form
 }
 
 module "minor_authorization_validator" {

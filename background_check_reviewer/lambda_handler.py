@@ -5,7 +5,9 @@ import os
 import re
 import unicodedata
 from datetime import datetime, timezone
+from html import escape
 from typing import Any
+from urllib.parse import urlencode
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -63,6 +65,11 @@ def _bedrock_client():
 def _textract_client():
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     return boto3.client("textract", region_name=region)
+
+
+def _ses_client():
+    region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+    return boto3.client("sesv2", region_name=region)
 
 
 def _load_secret(secret_id: str) -> dict[str, str]:
@@ -151,6 +158,56 @@ def _normalized_digits(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     return "".join(character for character in value if character.isdigit())
+
+
+def _levenshtein_distance(left: str, right: str) -> int:
+    if left == right:
+        return 0
+    if not left:
+        return len(right)
+    if not right:
+        return len(left)
+
+    previous = list(range(len(right) + 1))
+    for left_index, left_char in enumerate(left, start=1):
+        current = [left_index]
+        for right_index, right_char in enumerate(right, start=1):
+            insertion = current[right_index - 1] + 1
+            deletion = previous[right_index] + 1
+            substitution = previous[right_index - 1] + (0 if left_char == right_char else 1)
+            current.append(min(insertion, deletion, substitution))
+        previous = current
+    return previous[-1]
+
+
+def _name_match_result(extracted_full_name: Any, expected_full_name: Any) -> dict[str, Any]:
+    normalized_extracted = _normalized_ascii_upper(extracted_full_name)
+    normalized_expected = _normalized_ascii_upper(expected_full_name)
+    if not normalized_extracted or not normalized_expected:
+        return {
+            "matches": False,
+            "distance": None,
+            "strategy": "missing",
+        }
+    if normalized_extracted == normalized_expected:
+        return {
+            "matches": True,
+            "distance": 0,
+            "strategy": "exact",
+        }
+
+    distance = _levenshtein_distance(normalized_extracted, normalized_expected)
+    if distance <= 2:
+        return {
+            "matches": True,
+            "distance": distance,
+            "strategy": "fuzzy_minor_ocr",
+        }
+    return {
+        "matches": False,
+        "distance": distance,
+        "strategy": "mismatch",
+    }
 
 
 def _review_item_key(form_id: Any, submission_id: Any, document_kind: str) -> dict[str, str]:
@@ -464,8 +521,11 @@ def _certificate_validation_result(
     required_phrase = _certificate_required_phrase(document_kind)
     normalized_text = _normalized_ascii_upper(review_text if isinstance(review_text, str) else "")
 
+    # The document number is the hard identity anchor across all three files.
+    # Names may carry minor OCR noise, so we allow a tiny reconciliation window there.
     number_matches = _normalized_digits(extracted_number) == _normalized_digits(expected_number)
-    full_name_matches = _normalized_ascii_upper(extracted_full_name) == _normalized_ascii_upper(expected_full_name)
+    name_match = _name_match_result(extracted_full_name, expected_full_name)
+    full_name_matches = bool(name_match.get("matches"))
     required_phrase_matches = bool(required_phrase and required_phrase in normalized_text)
     consultation_datetime_found = bool(consultation_datetime_text)
 
@@ -484,6 +544,8 @@ def _certificate_validation_result(
         "required_phrase": required_phrase,
         "matched_document_number": number_matches,
         "matched_full_name": full_name_matches,
+        "matched_full_name_strategy": name_match.get("strategy"),
+        "matched_full_name_distance": name_match.get("distance"),
         "matched_required_phrase": required_phrase_matches,
         "consultation_datetime_found": consultation_datetime_found,
         "extracted_document_number": extracted_number,
@@ -492,6 +554,458 @@ def _certificate_validation_result(
         "expected_document_number": expected_number,
         "expected_full_name": expected_full_name,
     }
+
+
+def _review_details_snapshot(item: dict[str, Any]) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {
+        "document_kind": item.get("document_kind"),
+        "status": item.get("status"),
+        "validation_status": item.get("validation_status"),
+        "validation_errors": item.get("validation_errors") or [],
+    }
+    for key in (
+        "identity_document_number",
+        "identity_last_names",
+        "identity_first_names",
+        "identity_full_name",
+        "extracted_document_number",
+        "extracted_full_name",
+        "required_phrase",
+        "matched_document_number",
+        "matched_full_name",
+        "matched_full_name_strategy",
+        "matched_full_name_distance",
+        "matched_required_phrase",
+        "consultation_datetime_text",
+        "document_country",
+        "both_sides_present",
+    ):
+        value = item.get(key)
+        if value is not None:
+            snapshot[key] = value
+    return snapshot
+
+
+def _resolved_certificate_identity(valid_certificates: list[dict[str, Any]]) -> tuple[str | None, str | None, str | None]:
+    if not valid_certificates:
+        return None, None, None
+
+    valid_numbers = [str(item.get("extracted_document_number")).strip() for item in valid_certificates if item.get("extracted_document_number")]
+    valid_names = [str(item.get("extracted_full_name")).strip() for item in valid_certificates if item.get("extracted_full_name")]
+
+    resolved_number = None
+    if valid_numbers and len({_normalized_digits(value) for value in valid_numbers}) == 1:
+        resolved_number = valid_numbers[0]
+
+    resolved_name = None
+    resolved_name_source = None
+    if valid_names and len({_normalized_ascii_upper(value) for value in valid_names}) == 1:
+        resolved_name = valid_names[0]
+        resolved_name_source = "certificates"
+    elif len(valid_names) == 1:
+        resolved_name = valid_names[0]
+        resolved_name_source = str(valid_certificates[0].get("document_kind") or "certificate")
+
+    return resolved_number, resolved_name, resolved_name_source
+
+
+def _final_review_summary(form_id: Any, submission_id: Any) -> dict[str, Any] | None:
+    review_items = _query_submission_review_items(submission_id)
+    if not review_items:
+        return None
+
+    items_by_kind = {
+        str(item.get("document_kind") or "").strip(): item
+        for item in review_items
+        if isinstance(item, dict) and item.get("document_kind")
+    }
+    cedula_item = items_by_kind.get("cedula")
+    if not cedula_item:
+        return None
+
+    judicial_item = items_by_kind.get("antecedentes_judiciales")
+    inhabilidades_item = items_by_kind.get("antecedentes_inhabilidades")
+    cedula_identity = _cedula_identity_snapshot(cedula_item)
+    errors: list[str] = []
+
+    if cedula_item.get("validation_status") != "valid":
+        errors.extend(list(cedula_item.get("validation_errors") or []))
+
+    missing_documents: list[str] = []
+    invalid_documents: list[str] = []
+    valid_certificates: list[dict[str, Any]] = []
+    for required_kind in ("antecedentes_judiciales", "antecedentes_inhabilidades"):
+        item = items_by_kind.get(required_kind)
+        if item is None:
+            missing_documents.append(required_kind)
+            errors.append(f"missing_{required_kind}")
+            continue
+        if item.get("validation_status") != "valid":
+            invalid_documents.append(required_kind)
+            errors.extend(list(item.get("validation_errors") or []))
+            continue
+        valid_certificates.append(item)
+
+    resolved_number, resolved_name, resolved_name_source = _resolved_certificate_identity(valid_certificates)
+    if not resolved_number:
+        resolved_number = cedula_identity.get("document_number")
+    if not resolved_name:
+        resolved_name = cedula_identity.get("full_name")
+        resolved_name_source = "cedula" if resolved_name else None
+
+    if cedula_item.get("validation_status") != "valid" or invalid_documents:
+        final_review_status = "rejected"
+    elif missing_documents:
+        final_review_status = "pending_documents"
+    else:
+        final_review_status = "approved"
+
+    return {
+        "pk": f"FORM#{form_id or 'UNKNOWN_FORM'}",
+        "sk": f"SUBMISSION#{submission_id or 'UNKNOWN_SUBMISSION'}#DOCUMENT#cedula",
+        "final_review_status": final_review_status,
+        "final_review_errors": sorted(set(error for error in errors if error)),
+        "resolved_document_number": resolved_number,
+        "resolved_full_name": resolved_name,
+        "resolved_full_name_source": resolved_name_source,
+        "judicial_validation_status": (judicial_item or {}).get("validation_status"),
+        "inhabilidades_validation_status": (inhabilidades_item or {}).get("validation_status"),
+        "judicial_consultation_datetime_text": (judicial_item or {}).get("consultation_datetime_text"),
+        "inhabilidades_consultation_datetime_text": (inhabilidades_item or {}).get("consultation_datetime_text"),
+        "final_review_details": {
+            key: _review_details_snapshot(value)
+            for key, value in (
+                ("cedula", cedula_item),
+                ("antecedentes_judiciales", judicial_item),
+                ("antecedentes_inhabilidades", inhabilidades_item),
+            )
+            if isinstance(value, dict)
+        },
+    }
+
+
+def _store_final_review_summary(form_id: Any, submission_id: Any) -> dict[str, Any] | None:
+    summary = _final_review_summary(form_id, submission_id)
+    if not summary:
+        return None
+    cedula_item = _get_review_item(form_id, submission_id, "cedula")
+    if not cedula_item:
+        return None
+    updated_cedula_item = dict(cedula_item)
+    updated_cedula_item.update(summary)
+    _store_review(updated_cedula_item)
+    return updated_cedula_item
+
+
+def _background_check_notification_from_email() -> str:
+    value = os.getenv("BACKGROUND_CHECK_NOTIFICATION_FROM_EMAIL")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise RuntimeError("BACKGROUND_CHECK_NOTIFICATION_FROM_EMAIL is not configured.")
+
+
+def _background_check_notification_reply_to_email() -> str:
+    value = os.getenv("BACKGROUND_CHECK_NOTIFICATION_REPLY_TO_EMAIL")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return _background_check_notification_from_email()
+
+
+def _background_check_notification_logo_url() -> str | None:
+    value = os.getenv("BACKGROUND_CHECK_NOTIFICATION_LOGO_URL")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _background_check_notification_support_url() -> str:
+    value = os.getenv("BACKGROUND_CHECK_NOTIFICATION_SUPPORT_URL")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "https://circleup.com.co"
+
+
+def _background_check_allowed_admin_emails() -> set[str]:
+    return {
+        "hola@circleup.com.co",
+        "wearecircleup@gmail.com",
+    }
+
+
+def _background_check_notification_to_emails() -> list[str]:
+    value = os.getenv("BACKGROUND_CHECK_NOTIFICATION_TO_EMAIL")
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeError("BACKGROUND_CHECK_NOTIFICATION_TO_EMAIL is not configured.")
+    parsed = [email.strip().lower() for email in value.split(",") if email.strip()]
+    if not parsed:
+        raise RuntimeError("BACKGROUND_CHECK_NOTIFICATION_TO_EMAIL must contain at least one email.")
+    unauthorized = [email for email in parsed if email not in _background_check_allowed_admin_emails()]
+    if unauthorized:
+        raise RuntimeError(
+            "BACKGROUND_CHECK_NOTIFICATION_TO_EMAIL contains unauthorized recipients: "
+            + ", ".join(unauthorized)
+        )
+    return parsed
+
+
+def _background_check_internal_review_form_url() -> str:
+    value = os.getenv("BACKGROUND_CHECK_INTERNAL_REVIEW_FORM_URL")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise RuntimeError("BACKGROUND_CHECK_INTERNAL_REVIEW_FORM_URL is not configured.")
+
+
+def _summary_detail(summary_item: dict[str, Any], document_kind: str) -> dict[str, Any]:
+    details = summary_item.get("final_review_details")
+    if not isinstance(details, dict):
+        return {}
+    item = details.get(document_kind)
+    return item if isinstance(item, dict) else {}
+
+
+def _review_payload_field(summary_item: dict[str, Any], field_name: str) -> str | None:
+    payload = summary_item.get("review_payload")
+    if not isinstance(payload, dict):
+        return None
+    if field_name == "document_type":
+        value = payload.get("document_type")
+        return str(value).strip() if isinstance(value, str) and value.strip() else None
+    fields = payload.get("fields")
+    if not isinstance(fields, dict):
+        return None
+    field = fields.get(field_name)
+    if not isinstance(field, dict):
+        return None
+    value = field.get("value")
+    return str(value).strip() if isinstance(value, str) and value.strip() else None
+
+
+def _background_check_notification_fingerprint(summary_item: dict[str, Any]) -> str:
+    errors = summary_item.get("final_review_errors") or []
+    if not isinstance(errors, list):
+        errors = [str(errors)]
+    return "|".join(
+        [
+            str(summary_item.get("final_review_status") or ""),
+            ",".join(sorted(str(error) for error in errors if error)),
+            str(summary_item.get("resolved_document_number") or ""),
+            str(summary_item.get("resolved_full_name") or ""),
+        ]
+    )
+
+
+def _build_background_check_internal_review_url(summary_item: dict[str, Any]) -> str:
+    judicial_detail = _summary_detail(summary_item, "antecedentes_judiciales")
+    inhabilidades_detail = _summary_detail(summary_item, "antecedentes_inhabilidades")
+    errors = summary_item.get("final_review_errors") or []
+    if not isinstance(errors, list):
+        errors = [str(errors)]
+    params = {
+        "contact.first_name": summary_item.get("identity_first_names"),
+        "contact.last_name": summary_item.get("identity_last_names"),
+        "contact.email": summary_item.get("contact_email") or summary_item.get("registration_email"),
+        "contact.phone_number": summary_item.get("contact_phone"),
+        "document_type": _review_payload_field(summary_item, "document_type"),
+        "document_number": summary_item.get("resolved_document_number") or summary_item.get("identity_document_number"),
+        "full_name": summary_item.get("resolved_full_name") or summary_item.get("identity_full_name"),
+        "judicial_result": judicial_detail.get("required_phrase"),
+        "judicial_datetime": summary_item.get("judicial_consultation_datetime_text"),
+        "inhabilidades_result": inhabilidades_detail.get("required_phrase"),
+        "inhabilidades_datetime": summary_item.get("inhabilidades_consultation_datetime_text"),
+        "form_id": summary_item.get("form_id"),
+        "submission_id": summary_item.get("submission_id"),
+        "final_review_status": summary_item.get("final_review_status"),
+        "final_review_errors": ",".join(str(error) for error in errors if error),
+        "resolved_document_number": summary_item.get("resolved_document_number"),
+        "resolved_full_name": summary_item.get("resolved_full_name"),
+    }
+    normalized_params = {key: str(value) for key, value in params.items() if value not in (None, "")}
+    base_url = _background_check_internal_review_form_url()
+    separator = "&" if "?" in base_url else "?"
+    return f"{base_url}{separator}{urlencode(normalized_params)}"
+
+
+def _build_background_check_admin_email(summary_item: dict[str, Any]) -> tuple[str, str, str]:
+    review_url = _build_background_check_internal_review_url(summary_item)
+    subject = f"Revision final de antecedentes: {summary_item.get('final_review_status') or 'pendiente'}"
+    support_url = _background_check_notification_support_url()
+    logo_url = _background_check_notification_logo_url()
+    final_status = str(summary_item.get("final_review_status") or "pending").replace("_", " ")
+    judicial_status = str(summary_item.get("judicial_validation_status") or "pending_reference").replace("_", " ")
+    inhabilidades_status = str(summary_item.get("inhabilidades_validation_status") or "pending_reference").replace("_", " ")
+    errors = summary_item.get("final_review_errors") or []
+    if not isinstance(errors, list):
+        errors = [str(errors)]
+    final_errors = ", ".join(str(error) for error in errors if error) or "sin observaciones registradas"
+
+    intro = (
+        "Ya esta lista la respuesta final de la verificacion documental de un voluntario. "
+        "Este formulario es de uso interno. Contiene la informacion recopilada durante el proceso "
+        "de verificacion documental de un voluntario, para su revision y decision final."
+    )
+    rows = [
+        ("Estado final", final_status),
+        ("Antecedentes judiciales", judicial_status),
+        ("Inhabilidades", inhabilidades_status),
+        ("Submission ID", str(summary_item.get("submission_id") or "")),
+        ("Observaciones", final_errors),
+    ]
+
+    text_lines = [
+        "Hola,",
+        "",
+        intro,
+        "",
+    ]
+    for label, value in rows:
+        if value:
+            text_lines.append(f"{label}: {value}")
+    text_lines.extend(
+        [
+            "",
+            f"Revision interna: {review_url}",
+            "",
+            "Circle Up Community",
+            "circleup.com.co",
+        ]
+    )
+    text_body = "\n".join(text_lines)
+
+    html_rows = "".join(
+        (
+            "<tr>"
+            f"<td style=\"padding: 0 0 8px; width: 220px; vertical-align: top; color: #7d95ad; font-size: 12px; line-height: 1.6;\">{escape(label)}</td>"
+            f"<td style=\"padding: 0 0 8px; vertical-align: top; color: #153f69; font-size: 12px; line-height: 1.6;\">{escape(value)}</td>"
+            "</tr>"
+        )
+        for label, value in rows
+        if value
+    )
+
+    html_body = (
+        "<html>"
+        "<head>"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+        "<style>"
+        "@media screen and (max-width: 720px) {"
+        "  .admin-shell { width: 100% !important; }"
+        "  .content-col { padding: 28px 20px 22px !important; }"
+        "}"
+        "</style>"
+        "</head>"
+        "<body style=\"margin: 0; padding: 0; background-color: #f7f7f4; font-family: Arial, Helvetica, sans-serif; color: #153f69;\">"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background-color: #f7f7f4; padding: 40px 20px;\">"
+        "<tr><td align=\"center\">"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" class=\"admin-shell\" style=\"max-width: 760px; background-color: #ffffff;\">"
+        "<tr><td class=\"content-col\" style=\"padding: 32px 28px 28px;\">"
+        "<div style=\"margin: 0 0 16px; color: #7d95ad; font-size: 12px; line-height: 18px; text-transform: uppercase; letter-spacing: 0.12em;\">Circle Up Community</div>"
+        "<h1 style=\"margin: 0 0 18px; font-size: 30px; line-height: 1.1; font-weight: 500; color: #0f4978;\">Revision final de antecedentes</h1>"
+        f"<p style=\"margin: 0 0 22px; font-size: 12px; line-height: 1.7; color: #5e7f9c;\">{escape(intro)}</p>"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin: 0 0 18px;\">"
+        f"{html_rows}"
+        "</table>"
+        "<p style=\"margin: 8px 0 24px;\">"
+        f"<a href=\"{escape(review_url, quote=True)}\" "
+        "style=\"display: inline-block; padding: 16px 28px; background-color: #4da3f5; color: #ffffff; text-decoration: none; border-radius: 0; font-size: 16px; font-weight: 700;\">"
+        "Abrir revision interna"
+        "</a>"
+        "</p>"
+        "<div style=\"padding-top: 20px; border-top: 1px solid #d7e2ec;\">"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">"
+        "<tr>"
+        "<td style=\"vertical-align: bottom; text-align: left;\">"
+        "<div style=\"margin: 0 0 4px; color: #7d95ad; font-size: 12px; line-height: 18px; text-transform: uppercase; letter-spacing: 0.12em;\">Circle Up Community</div>"
+        f"<div style=\"font-size: 12px; line-height: 18px; color: #0f4978;\"><a href=\"{escape(support_url, quote=True)}\" style=\"color: #0f4978; text-decoration: none;\">circleup.com.co</a></div>"
+        "</td>"
+        "<td style=\"vertical-align: bottom; text-align: right;\">"
+    )
+    if logo_url:
+        html_body += (
+            f"<img src=\"{escape(logo_url, quote=True)}\" alt=\"Circle Up Community\" width=\"42\" style=\"display: inline-block; width: 42px; height: auto; border: 0; outline: none; text-decoration: none;\">"
+        )
+    html_body += (
+        "</td>"
+        "</tr>"
+        "</table>"
+        "</div>"
+        "</td></tr></table></td></tr></table></body></html>"
+    )
+    return subject, text_body, html_body
+
+
+def _should_send_background_check_admin_notification(summary_item: dict[str, Any]) -> bool:
+    if summary_item.get("final_review_status") not in {"approved", "rejected"}:
+        return False
+    fingerprint = _background_check_notification_fingerprint(summary_item)
+    return not (
+        summary_item.get("internal_review_notification_status") == "sent"
+        and summary_item.get("internal_review_notification_fingerprint") == fingerprint
+    )
+
+
+def _record_background_check_admin_notification_result(
+    summary_item: dict[str, Any],
+    result: dict[str, Any],
+    error_detail: str | None = None,
+) -> None:
+    updated = dict(summary_item)
+    updated["internal_review_notification_status"] = result.get("status")
+    updated["internal_review_notification_message_id"] = result.get("message_id")
+    updated["internal_review_notification_recipient"] = result.get("recipient")
+    updated["internal_review_notification_error"] = error_detail
+    updated["internal_review_notification_fingerprint"] = _background_check_notification_fingerprint(summary_item)
+    if result.get("sent"):
+        updated["internal_review_notification_sent_at"] = _utc_now()
+    _store_review(updated)
+
+
+def _send_background_check_admin_notification(summary_item: dict[str, Any]) -> dict[str, Any]:
+    subject, text_body, html_body = _build_background_check_admin_email(summary_item)
+    recipients = _background_check_notification_to_emails()
+    response = _ses_client().send_email(
+        FromEmailAddress=_background_check_notification_from_email(),
+        Destination={"ToAddresses": recipients},
+        ReplyToAddresses=[_background_check_notification_reply_to_email()],
+        Content={
+            "Simple": {
+                "Subject": {"Data": subject, "Charset": "UTF-8"},
+                "Body": {
+                    "Text": {"Data": text_body, "Charset": "UTF-8"},
+                    "Html": {"Data": html_body, "Charset": "UTF-8"},
+                },
+            }
+        },
+    )
+    return {
+        "sent": True,
+        "status": "sent",
+        "message_id": response.get("MessageId"),
+        "recipient": ", ".join(recipients),
+    }
+
+
+def _maybe_send_background_check_admin_notification(summary_item: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(summary_item, dict):
+        return None
+    if not _should_send_background_check_admin_notification(summary_item):
+        return None
+    try:
+        result = _send_background_check_admin_notification(summary_item)
+        _record_background_check_admin_notification_result(summary_item, result)
+        return result
+    except Exception as exc:
+        logger.exception(
+            "Failed to send background check admin notification for submission %s.",
+            summary_item.get("submission_id"),
+        )
+        failure = {
+            "sent": False,
+            "status": "failed",
+            "message_id": None,
+            "recipient": None,
+        }
+        _record_background_check_admin_notification_result(summary_item, failure, str(exc))
+        return failure
 
 
 def _source_submission(job: dict[str, Any]) -> dict[str, Any] | None:
@@ -568,6 +1082,7 @@ def _reconcile_certificate_reviews(form_id: Any, submission_id: Any) -> list[dic
         updated_item = _update_review_validation(item, validation_result)
         _store_review(updated_item)
         updated_items.append(updated_item)
+    _store_final_review_summary(form_id, submission_id)
     return updated_items
 
 
@@ -628,20 +1143,39 @@ def _process_job(job: dict[str, Any]) -> dict[str, Any]:
         )
     _store_review(review_item)
     reconciled_items: list[dict[str, Any]] = []
+    summary_item: dict[str, Any] | None = None
+    admin_notification: dict[str, Any] | None = None
     if document_kind == "cedula":
         if review_item.get("validation_status") == "valid" and (os.getenv("BACKGROUND_CHECK_REVIEWS_TABLE_NAME") or "").strip():
             reconciled_items = _reconcile_certificate_reviews(job.get("form_id"), job.get("submission_id"))
+        summary_item = _store_final_review_summary(job.get("form_id"), job.get("submission_id"))
+    elif document_kind in {"antecedentes_judiciales", "antecedentes_inhabilidades"}:
+        summary_item = _store_final_review_summary(job.get("form_id"), job.get("submission_id"))
+    if summary_item:
+        admin_notification = _maybe_send_background_check_admin_notification(summary_item)
     logger.info("Stored background check review: %s", json.dumps(review_item, ensure_ascii=False, default=str))
     if reconciled_items:
         logger.info(
             "Reconciled certificate reviews after cedula processing: %s",
             json.dumps(reconciled_items, ensure_ascii=False, default=str),
         )
+    if summary_item:
+        logger.info(
+            "Stored background check final summary: %s",
+            json.dumps(summary_item, ensure_ascii=False, default=str),
+        )
+    if admin_notification:
+        logger.info(
+            "Processed background check admin notification: %s",
+            json.dumps(admin_notification, ensure_ascii=False, default=str),
+        )
     return {
         "submission_id": job.get("submission_id"),
         "status": "completed",
         "document_kind": document_kind,
         "reconciled_documents": [item.get("document_kind") for item in reconciled_items],
+        "final_review_status": (summary_item or {}).get("final_review_status"),
+        "admin_notification_status": (admin_notification or {}).get("status"),
     }
 
 
