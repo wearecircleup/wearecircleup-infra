@@ -56,6 +56,7 @@ resource "aws_iam_role_policy" "dynamodb" {
         Effect = "Allow"
         Action = [
           "dynamodb:GetItem",
+          "dynamodb:Query",
           "dynamodb:PutItem",
           "dynamodb:UpdateItem"
         ]
@@ -174,7 +175,7 @@ resource "aws_lambda_function" "this" {
       BACKGROUND_CHECK_FILES_BUCKET_NAME      = var.background_check_files_bucket_name
       BACKGROUND_CHECK_MODEL_ID_SECRET_KEY    = "BEDROCK_MODEL_ID"
       BACKGROUND_CHECK_FORM_ID_SECRET_KEY     = "VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID"
-      BACKGROUND_CHECK_REVIEW_MAX_PAGES       = "1"
+      BACKGROUND_CHECK_REVIEW_MAX_PAGES       = "2"
     }
   }
 
