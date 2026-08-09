@@ -34,6 +34,8 @@ VOLUNTEER_INTENT_REQUESTED_DATE_QUESTION = "¿Qué día te gustaría que fuera e
 VOLUNTEER_INTENT_REQUESTED_TIME_QUESTION = "¿A qué hora?"
 VOLUNTEER_INTENT_ADMIN_QUESTION = "¿Tienes alguna pregunta para nosotros?"
 UNKNOWN_EVENT_ID = "UNKNOWN_EVENT"
+PARTITION_KEY_QUESTION = "Partition key"
+BACKGROUND_CHECK_APPROVAL_QUESTION = "Estado de aprobaciÃ³n"
 
 
 def _utc_now() -> str:
@@ -57,7 +59,19 @@ def _normalized_question_key(value: str) -> str:
 
 
 def _ascii_normalized(value: str) -> str:
-    cleaned = str(_clean_text(value) or "").strip().lower()
+    raw = str(value or "")
+    repaired = raw
+    for _ in range(2):
+        if not any(marker in repaired for marker in ("Ã", "Â")):
+            break
+        try:
+            candidate = repaired.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            break
+        if candidate == repaired:
+            break
+        repaired = candidate
+    cleaned = str(_clean_text(repaired) or "").strip().lower()
     return unicodedata.normalize("NFKD", cleaned).encode("ascii", "ignore").decode("ascii")
 
 
@@ -111,6 +125,20 @@ def _configured_form_id(secret: dict[str, str], secret_key: str, env_key: str) -
     if value:
         return value
     return (os.getenv(env_key) or "").strip()
+
+
+def _background_internal_review_form_id() -> str:
+    secret_id = os.getenv("EVENTBRITE_SECRET_ID")
+    if secret_id:
+        secret = _load_secret(secret_id)
+        value = (secret.get("VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID") or "").strip()
+        if value:
+            return value
+        raise RuntimeError(f"VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID is missing in secret {secret_id}.")
+    value = (os.getenv("VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID") or "").strip()
+    if value:
+        return value
+    raise RuntimeError("VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID is not configured.")
 
 
 def _configured_form_routes() -> dict[str, dict[str, Any]]:
@@ -168,18 +196,89 @@ def _configured_form_routes() -> dict[str, dict[str, Any]]:
     return routes
 
 
-def _storage_config_for_form(form_id: Any) -> dict[str, Any] | None:
+def _normalized_answers_map(parsed_body: dict[str, Any]) -> dict[str, Any]:
+    answers = parsed_body.get("answers")
+    if not isinstance(answers, dict):
+        return {}
+    return {
+        str(_clean_text(str(question))): (_clean_text(answer) if isinstance(answer, str) else answer)
+        for question, answer in answers.items()
+    }
+
+
+def _deep_clean(value: Any) -> Any:
+    if isinstance(value, str):
+        return _clean_text(value)
+    if isinstance(value, list):
+        return [_deep_clean(item) for item in value]
+    if isinstance(value, dict):
+        return {str(_clean_text(str(key))): _deep_clean(item) for key, item in value.items()}
+    return value
+
+
+def _parse_background_partition_key(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    match = re.fullmatch(
+        r"FORM#(?P<form_id>[^#]+)#SUBMISSION#(?P<submission_id>[^#]+)#DOCUMENT#(?P<document_number>.+)",
+        value.strip(),
+    )
+    if not match:
+        return None
+    parsed = match.groupdict()
+    return {
+        "partition_key": value.strip(),
+        "source_form_id": parsed["form_id"],
+        "source_submission_id": parsed["submission_id"],
+        "source_document_number": parsed["document_number"],
+        "source_submission_pk": f"FORM#{parsed['form_id']}",
+        "source_submission_sk": f"SUBMISSION#{parsed['submission_id']}",
+    }
+
+
+def _is_background_check_internal_review(parsed_body: dict[str, Any]) -> bool:
+    # This form must always be gated by the exact configured form id. Otherwise,
+    # any unrelated YouForm payload that happens to include similarly named
+    # fields could be persisted as a background-check internal review record.
+    if str(parsed_body.get("form_id") or "").strip() != _background_internal_review_form_id():
+        return False
+    answers = _answer_lookup(parsed_body)
+    partition_key = answers.get(_normalized_question_key(PARTITION_KEY_QUESTION))
+    approval_status = answers.get(_normalized_question_key(BACKGROUND_CHECK_APPROVAL_QUESTION))
+    return isinstance(partition_key, str) and partition_key.startswith("FORM#") and isinstance(approval_status, str)
+
+
+def _storage_config_for_form(form_id: Any, parsed_body: dict[str, Any] | None = None) -> dict[str, Any] | None:
     normalized_form_id = str(form_id or "").strip()
-    if not normalized_form_id:
-        return None
-    config = _configured_form_routes().get(normalized_form_id)
-    if not config:
-        return None
-    table_name = str(config.get("table_name") or "").strip()
-    if not table_name:
-        logger.warning("No submission table configured for form_id %s.", normalized_form_id)
-        return None
-    return config
+    config = _configured_form_routes().get(normalized_form_id) if normalized_form_id else None
+    if config:
+        table_name = str(config.get("table_name") or "").strip()
+        if not table_name:
+            logger.warning("No submission table configured for form_id %s.", normalized_form_id)
+            return None
+        return config
+
+    # The internal review form is intentionally linked through the hidden
+    # "Partition key" answer instead of depending on a dedicated event URL.
+    # We still require the exact secret-managed form id so only the intended
+    # internal review workflow can write sibling records next to a background
+    # check submission.
+    if isinstance(parsed_body, dict) and _is_background_check_internal_review(parsed_body):
+        table_name = str(os.getenv("VOLUNTEER_BACKGROUND_CHECK_SUBMISSIONS_TABLE_NAME") or "").strip()
+        if not table_name:
+            logger.warning("No submission table configured for background check internal review form_id %s.", normalized_form_id)
+            return None
+        return {
+            "table_name": table_name,
+            "bucket_name": None,
+            "storage_prefix": None,
+            "reconcile_minor_authorization": False,
+            "preserve_signature_key": False,
+            "key_strategy": "background_internal_review",
+            "admin_notification_type": None,
+            "background_check_processing": False,
+        }
+    return None
 
 
 def _minor_authorization_jobs_table():
@@ -474,6 +573,70 @@ def _extract_scalar_answer(answer_lookup: dict[str, Any], *questions: str) -> st
         value = answer_lookup.get(_normalized_question_key(question))
         if isinstance(value, str) and value.strip():
             return value.strip()
+        expected_ascii = _ascii_normalized(question)
+        for answer_key, answer_value in answer_lookup.items():
+            normalized_key = _ascii_normalized(answer_key)
+            if (
+                (
+                    normalized_key == expected_ascii
+                    or (
+                        " " in expected_ascii
+                        and (
+                            (expected_ascii and expected_ascii in normalized_key)
+                            or (normalized_key and normalized_key in expected_ascii)
+                        )
+                    )
+                )
+                and isinstance(answer_value, str)
+                and answer_value.strip()
+            ):
+                return answer_value.strip()
+    return None
+
+
+def _extract_event_url_answer(answer_lookup: dict[str, Any]) -> str | None:
+    direct = _extract_scalar_answer(answer_lookup, EVENT_URL_QUESTION, "evento asiste", "a que evento asiste")
+    if direct:
+        return direct
+    for answer_key, answer_value in answer_lookup.items():
+        if not isinstance(answer_value, str) or not answer_value.strip():
+            continue
+        normalized_key = _ascii_normalized(answer_key)
+        if "evento" in normalized_key and "eventbrite" in answer_value:
+            return answer_value.strip()
+    return None
+
+
+def _extract_event_date_answer(answer_lookup: dict[str, Any]) -> str | None:
+    direct = _extract_scalar_answer(answer_lookup, EVENT_DATE_QUESTION, "que dia es el evento", "dia es el evento")
+    if direct:
+        return direct
+    for answer_key, answer_value in answer_lookup.items():
+        if not isinstance(answer_value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", answer_value.strip()):
+            continue
+        normalized_key = _ascii_normalized(answer_key)
+        if "evento" in normalized_key:
+            return answer_value.strip()
+    return None
+
+
+def _extract_registration_email_answer(answer_lookup: dict[str, Any]) -> str | None:
+    direct = _extract_scalar_answer(
+        answer_lookup,
+        REGISTRATION_EMAIL_QUESTION,
+        "con que correo vas a realizar la inscripcion",
+        "correo vas a realizar la inscripcion",
+    )
+    if direct:
+        return direct
+    for answer_key, answer_value in answer_lookup.items():
+        if not isinstance(answer_value, str) or "@" not in answer_value:
+            continue
+        normalized_key = _ascii_normalized(answer_key)
+        if ("correo" in normalized_key or "email" in normalized_key) and (
+            "inscrip" in normalized_key or "registr" in normalized_key or "realizar" in normalized_key
+        ):
+            return answer_value.strip()
     return None
 
 
@@ -565,6 +728,8 @@ def _build_keys(
     event_date: str | None,
     completed_at: str | None,
     contact_phone: str | None = None,
+    source_submission_pk: str | None = None,
+    source_submission_sk: str | None = None,
 ) -> dict[str, str]:
     safe_form_id = str(form_id or "UNKNOWN_FORM")
     safe_submission_id = str(submission_id or "UNKNOWN_SUBMISSION")
@@ -584,6 +749,24 @@ def _build_keys(
         if contact_phone:
             keys["gsi3pk"] = f"PHONE#{_normalized_phone_key(contact_phone)}"
             keys["gsi3sk"] = f"FORM#{safe_form_id}#COMPLETED_AT#{safe_completed_at}#SUBMISSION#{safe_submission_id}"
+        return keys
+
+    if key_strategy == "background_internal_review":
+        safe_source_pk = source_submission_pk or f"FORM#{safe_form_id}"
+        safe_source_sk = source_submission_sk or "SUBMISSION#UNKNOWN_SOURCE_SUBMISSION"
+        keys = {
+            "pk": safe_source_pk,
+            "sk": f"{safe_source_sk}#INTERNAL_REVIEW#{safe_submission_id}",
+            "gsi1pk": safe_source_pk,
+            "gsi1sk": f"COMPLETED_AT#{safe_completed_at}#INTERNAL_REVIEW#{safe_submission_id}",
+        }
+        if registrant_email:
+            normalized_email = registrant_email.strip().lower()
+            keys["gsi2pk"] = f"EMAIL#{normalized_email}"
+            keys["gsi2sk"] = f"{safe_source_pk}#COMPLETED_AT#{safe_completed_at}#INTERNAL_REVIEW#{safe_submission_id}"
+        if contact_phone:
+            keys["gsi3pk"] = f"PHONE#{_normalized_phone_key(contact_phone)}"
+            keys["gsi3sk"] = f"{safe_source_pk}#COMPLETED_AT#{safe_completed_at}#INTERNAL_REVIEW#{safe_submission_id}"
         return keys
 
     safe_event_id = eventbrite_event_id or UNKNOWN_EVENT_ID
@@ -612,11 +795,10 @@ def _build_submission_item(parsed_body: dict[str, Any], storage_config: dict[str
 
     answer_lookup = _answer_lookup(parsed_body)
     key_strategy = str(storage_config.get("key_strategy") or "eventbrite_event")
-    event_metadata = _extract_eventbrite_event_metadata(
-        answer_lookup.get(_normalized_question_key(EVENT_URL_QUESTION))
-    )
-    event_date = _extract_scalar_answer(answer_lookup, EVENT_DATE_QUESTION)
-    registration_email = _extract_scalar_answer(answer_lookup, REGISTRATION_EMAIL_QUESTION)
+    normalized_answers = _normalized_answers_map(parsed_body)
+    event_metadata = _extract_eventbrite_event_metadata(_extract_event_url_answer(answer_lookup))
+    event_date = _extract_event_date_answer(answer_lookup)
+    registration_email = _extract_registration_email_answer(answer_lookup)
     contact_name = _extract_scalar_answer(answer_lookup, CONTACT_NAME_QUESTION)
     contact_email = _extract_scalar_answer(answer_lookup, CONTACT_EMAIL_QUESTION)
     contact_phone = _extract_scalar_answer(answer_lookup, CONTACT_PHONE_QUESTION)
@@ -626,6 +808,8 @@ def _build_submission_item(parsed_body: dict[str, Any], storage_config: dict[str
     proposal_requested_date = _extract_scalar_answer(answer_lookup, VOLUNTEER_INTENT_REQUESTED_DATE_QUESTION)
     proposal_requested_time = _extract_scalar_answer(answer_lookup, VOLUNTEER_INTENT_REQUESTED_TIME_QUESTION)
     proposal_admin_question = _extract_scalar_answer(answer_lookup, VOLUNTEER_INTENT_ADMIN_QUESTION)
+    partition_key = _extract_scalar_answer(answer_lookup, PARTITION_KEY_QUESTION)
+    parsed_partition_key = _parse_background_partition_key(partition_key)
     preferred_email = registration_email if key_strategy == "eventbrite_event" else (contact_email or registration_email)
     completed_at = parsed_body.get("completed_at")
 
@@ -639,6 +823,8 @@ def _build_submission_item(parsed_body: dict[str, Any], storage_config: dict[str
             event_date if isinstance(event_date, str) else None,
             completed_at if isinstance(completed_at, str) else None,
             contact_phone,
+            parsed_partition_key["source_submission_pk"] if parsed_partition_key else None,
+            parsed_partition_key["source_submission_sk"] if parsed_partition_key else None,
         ),
         "entity_type": "youform_submission",
         "submission_id": submission_id,
@@ -665,6 +851,19 @@ def _build_submission_item(parsed_body: dict[str, Any], storage_config: dict[str
         "proposal_admin_question": proposal_admin_question,
         "answers": _normalize_answers(parsed_body, storage_config),
     }
+    if key_strategy == "background_internal_review":
+        item.update(
+            {
+                "source_partition_key": parsed_partition_key["partition_key"] if parsed_partition_key else None,
+                "source_form_id": parsed_partition_key["source_form_id"] if parsed_partition_key else None,
+                "source_submission_id": parsed_partition_key["source_submission_id"] if parsed_partition_key else None,
+                "source_document_number": parsed_partition_key["source_document_number"] if parsed_partition_key else None,
+                "source_submission_pk": parsed_partition_key["source_submission_pk"] if parsed_partition_key else None,
+                "source_submission_sk": parsed_partition_key["source_submission_sk"] if parsed_partition_key else None,
+                "answers_map": normalized_answers,
+                "fields": _deep_clean(parsed_body.get("fields")),
+            }
+        )
     return {key: value for key, value in item.items() if value is not None}
 
 
@@ -991,7 +1190,7 @@ def _reconcile_minor_authorization_job(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _store_submission(parsed_body: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
-    storage_config = _storage_config_for_form(parsed_body.get("form_id"))
+    storage_config = _storage_config_for_form(parsed_body.get("form_id"), parsed_body)
     if storage_config is None:
         logger.info(
             "Skipping persistence because form_id %s is not configured for storage routing.",
@@ -1025,7 +1224,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     detected_file_answers: list[dict[str, str]] = []
 
     if isinstance(parsed_body, dict):
-        storage_config = _storage_config_for_form(parsed_body.get("form_id"))
+        storage_config = _storage_config_for_form(parsed_body.get("form_id"), parsed_body)
         detected_file_answers = _detected_file_answers(parsed_body)
         if storage_config is not None:
             storage_route = {

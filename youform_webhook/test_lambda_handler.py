@@ -292,6 +292,9 @@ def test_background_check_form_routes_to_its_own_table_and_bucket(monkeypatch):
 
     monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID", "dpaadbok")
     monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_SUBMISSIONS_TABLE_NAME", "background-table")
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID", "p35vzbna")
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID", "p35vzbna")
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID", "p35vzbna")
     monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_FILES_BUCKET_NAME", "background-bucket")
 
     def fake_dynamodb_table(table_name: str):
@@ -423,6 +426,67 @@ def test_handler_enqueues_background_check_cedula_pdf(monkeypatch):
     assert message_body["s3_uri"] == "s3://background-bucket/volunteer-background-checks/dpaadbok/qxxcnbmtd1/ahora-s-tu-c-dula.pdf"
 
 
+def test_background_check_internal_review_routes_to_background_table(monkeypatch):
+    saved: dict[str, object] = {}
+
+    class FakeBackgroundTable:
+        def put_item(self, Item):
+            saved["Item"] = Item
+
+    parsed_body = {
+        "submission_id": "v275sfa3sn",
+        "form_id": "p35vzbna",
+        "form_name": "Volunteer Background Internal Review",
+        "event_type": "submission",
+        "started_at": "2026-08-09T19:21:45.000000Z",
+        "completed_at": "2026-08-09T23:01:59.000000Z",
+        "answers": {
+            "Correo": "maestro@arte.com",
+            "TelÃ©fono": "+573211231212",
+            "Partition key": "FORM#dpaadbok#SUBMISSION#dexr8ogxjb#DOCUMENT#1020802674",
+            "Estado de aprobaciÃ³n": "BACKGROUND CHECK APPROVED",
+            "Observaciones": "OK",
+        },
+        "fields": [
+            {
+                "id": "partition-key-field",
+                "question": "Partition key",
+                "answer": "FORM#dpaadbok#SUBMISSION#dexr8ogxjb#DOCUMENT#1020802674",
+                "answer_text": "FORM#dpaadbok#SUBMISSION#dexr8ogxjb#DOCUMENT#1020802674",
+            },
+            {
+                "id": "approval-field",
+                "question": "Estado de aprobaciÃ³n",
+                "answer": "BACKGROUND CHECK APPROVED",
+                "answer_text": "BACKGROUND CHECK APPROVED",
+            },
+        ],
+    }
+
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_SUBMISSIONS_TABLE_NAME", "background-table")
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID", "p35vzbna")
+
+    def fake_dynamodb_table(table_name: str):
+        if table_name == "background-table":
+            return FakeBackgroundTable()
+        raise AssertionError(f"Unexpected table: {table_name}")
+
+    monkeypatch.setattr(mod, "_dynamodb_table", fake_dynamodb_table)
+
+    stored, item = mod._store_submission(parsed_body)
+
+    assert stored is True
+    assert item["pk"] == "FORM#dpaadbok"
+    assert item["sk"] == "SUBMISSION#dexr8ogxjb#INTERNAL_REVIEW#v275sfa3sn"
+    assert item["source_partition_key"] == "FORM#dpaadbok#SUBMISSION#dexr8ogxjb#DOCUMENT#1020802674"
+    assert item["source_submission_pk"] == "FORM#dpaadbok"
+    assert item["source_submission_sk"] == "SUBMISSION#dexr8ogxjb"
+    assert item["source_document_number"] == "1020802674"
+    assert item["answers_map"]["Estado de aprobaciÃ³n"] == "BACKGROUND CHECK APPROVED"
+    assert item["fields"][0]["question"] == "Partition key"
+    assert saved["Item"]["pk"] == "FORM#dpaadbok"
+
+
 def test_background_check_enqueue_requires_exact_configured_form_id(monkeypatch):
     sent_messages: list[dict[str, object]] = []
 
@@ -450,6 +514,28 @@ def test_background_check_enqueue_requires_exact_configured_form_id(monkeypatch)
 
     assert result == []
     assert sent_messages == []
+
+
+def test_background_check_internal_review_requires_exact_configured_form_id(monkeypatch):
+    parsed_body = {
+        "submission_id": "v275sfa3sn",
+        "form_id": "otro-form",
+        "form_name": "Volunteer Background Internal Review",
+        "event_type": "submission",
+        "completed_at": "2026-08-09T23:01:59.000000Z",
+        "answers": {
+            "Partition key": "FORM#dpaadbok#SUBMISSION#dexr8ogxjb#DOCUMENT#1020802674",
+            "Estado de aprobaciÃƒÂ³n": "BACKGROUND CHECK APPROVED",
+        },
+    }
+
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_SUBMISSIONS_TABLE_NAME", "background-table")
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID", "p35vzbna")
+
+    stored, item = mod._store_submission(parsed_body)
+
+    assert stored is False
+    assert item is None
 
 
 def test_background_check_review_messages_detect_all_three_document_types():

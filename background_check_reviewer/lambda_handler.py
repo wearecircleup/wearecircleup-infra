@@ -760,6 +760,40 @@ def _background_check_notification_support_url() -> str:
     return "https://circleup.com.co"
 
 
+def _normalized_whatsapp_phone(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    digits = "".join(character for character in value if character.isdigit())
+    if len(digits) < 10:
+        return None
+    return digits
+
+
+def _build_background_check_whatsapp_url(summary_item: dict[str, Any], decision: str) -> str | None:
+    phone = _normalized_whatsapp_phone(summary_item.get("contact_phone"))
+    full_name = str(summary_item.get("resolved_full_name") or "").strip().upper()
+    if not phone or not full_name:
+        return None
+
+    if decision == "pre_approved":
+        message = (
+            f"Hola *{full_name}*, luego de revisar los PDF que nos compartiste, nuestra respuesta es que "
+            "fuiste *APROBADO*. Este proceso se hace una sola vez, asi que nos emociona que te animes "
+            "a crear tantos eventos como quieras con nosotros. Si tienes cualquier duda, no dudes en "
+            "escribirnos por este numero. Un mensaje de voz tambien esta perfecto."
+        )
+    elif decision == "denied":
+        message = (
+            f"Hola *{full_name}*, luego de revisar los PDF que nos compartiste, nuestra respuesta es "
+            "*DENEGADO*. Si tienes dudas sobre esta decision, puedes escribirnos a hola@circleup.com.co "
+            "o por este numero. Un mensaje de voz tambien esta perfecto."
+        )
+    else:
+        return None
+
+    return f"https://wa.me/{phone}?{urlencode({'text': message})}"
+
+
 def _background_check_allowed_admin_emails() -> set[str]:
     return {
         "hola@circleup.com.co",
@@ -879,6 +913,8 @@ def _build_background_check_admin_email(summary_item: dict[str, Any]) -> tuple[s
     subject = f"Revision final de antecedentes: {summary_item.get('final_review_status') or 'pendiente'}"
     support_url = _background_check_notification_support_url()
     logo_url = _background_check_notification_logo_url()
+    approve_whatsapp_url = _build_background_check_whatsapp_url(summary_item, "pre_approved")
+    deny_whatsapp_url = _build_background_check_whatsapp_url(summary_item, "denied")
     final_status = str(summary_item.get("final_review_status") or "PENDING").replace("_", " ")
     judicial_status = _background_check_email_status_text(summary_item, "antecedentes_judiciales")
     inhabilidades_status = _background_check_email_status_text(summary_item, "antecedentes_inhabilidades")
@@ -908,6 +944,14 @@ def _build_background_check_admin_email(summary_item: dict[str, Any]) -> tuple[s
         [
             "",
             f"Revision interna: {review_url}",
+        ]
+    )
+    if approve_whatsapp_url:
+        text_lines.append(f"WhatsApp Aprobado: {approve_whatsapp_url}")
+    if deny_whatsapp_url:
+        text_lines.append(f"WhatsApp Denegado: {deny_whatsapp_url}")
+    text_lines.extend(
+        [
             "",
             "Circle Up Community",
             "circleup.com.co",
@@ -954,6 +998,25 @@ def _build_background_check_admin_email(summary_item: dict[str, Any]) -> tuple[s
         "Abrir revision interna"
         "</a>"
         "</p>"
+    )
+    if approve_whatsapp_url or deny_whatsapp_url:
+        html_body += "<p style=\"margin: 0 0 24px;\">"
+        if approve_whatsapp_url:
+            html_body += (
+                f"<a href=\"{escape(approve_whatsapp_url, quote=True)}\" "
+                "style=\"display: inline-block; margin: 0 12px 12px 0; padding: 14px 22px; background-color: #2fb36f; color: #ffffff; text-decoration: none; border-radius: 0; font-size: 14px; font-weight: 700;\">"
+                "WhatsApp: Aprobado"
+                "</a>"
+            )
+        if deny_whatsapp_url:
+            html_body += (
+                f"<a href=\"{escape(deny_whatsapp_url, quote=True)}\" "
+                "style=\"display: inline-block; margin: 0 12px 12px 0; padding: 14px 22px; background-color: #153f69; color: #ffffff; text-decoration: none; border-radius: 0; font-size: 14px; font-weight: 700;\">"
+                "WhatsApp: Denegado"
+                "</a>"
+            )
+        html_body += "</p>"
+    html_body += (
         "<div style=\"padding-top: 20px; border-top: 1px solid #d7e2ec;\">"
         "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">"
         "<tr>"

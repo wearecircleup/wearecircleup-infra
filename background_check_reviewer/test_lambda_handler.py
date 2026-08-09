@@ -448,6 +448,72 @@ def test_background_check_email_status_text_uses_clear_english_labels():
     assert mod._background_check_email_status_text(summary_item, "antecedentes_inhabilidades") == "NO DISQUALIFICATIONS"
 
 
+def test_build_background_check_whatsapp_url_uses_uppercase_name_and_status():
+    summary_item = {
+        "contact_phone": "+57 319 447 7859",
+        "resolved_full_name": "Daniel Nicolas Diaz Munevar",
+    }
+
+    approved_url = mod._build_background_check_whatsapp_url(summary_item, "pre_approved")
+    denied_url = mod._build_background_check_whatsapp_url(summary_item, "denied")
+
+    assert approved_url is not None
+    assert denied_url is not None
+    assert approved_url.startswith("https://wa.me/573194477859?")
+    assert "DANIEL+NICOLAS+DIAZ+MUNEVAR" in approved_url
+    assert "%2AAPROBADO%2A" in approved_url
+    assert "%2ADENEGADO%2A" in denied_url
+
+
+def test_build_background_check_admin_email_includes_whatsapp_buttons(monkeypatch):
+    monkeypatch.setenv("BACKGROUND_CHECK_INTERNAL_REVIEW_FORM_URL", "https://app.youform.com/forms/p35vzbna")
+    monkeypatch.setenv("BACKGROUND_CHECK_NOTIFICATION_SUPPORT_URL", "https://circleup.com.co")
+    monkeypatch.setenv(
+        "BACKGROUND_CHECK_NOTIFICATION_LOGO_URL",
+        "https://wearecircleup-prod-public-assets-311923415472-us-east-1.s3.us-east-1.amazonaws.com/email-assets/logo.png",
+    )
+
+    summary_item = {
+        "submission_id": "qxxcnbmtd1",
+        "contact_email": "gocircleup@gmail.com",
+        "contact_phone": "+573194477859",
+        "resolved_document_number": "1020802674",
+        "resolved_full_name": "DIAZ MUNEVAR DANIEL NICOLAS",
+        "partition_key": "FORM#dpaadbok#SUBMISSION#qxxcnbmtd1#DOCUMENT#1020802674",
+        "final_review_status": "PRE_APPROVED",
+        "final_review_errors": [],
+        "judicial_consultation_datetime_text": "08:13:16 AM 09/08/2026",
+        "inhabilidades_consultation_datetime_text": "08:11:56 09/08/2026",
+        "review_payload": {
+            "document_type": "cedula_pre_2020",
+            "fields": {
+                "fecha_nacimiento": {"value": "03/11/1994", "confidence": "confiable"},
+                "lugar_nacimiento": {"value": "Bogota", "confidence": "confiable"},
+                "nacionalidad": {"value": "Colombiana", "confidence": "confiable"},
+            },
+        },
+        "final_review_details": {
+            "antecedentes_judiciales": {
+                "validation_status": "valid",
+                "required_phrase": "NO TIENE ASUNTOS PENDIENTES CON LAS AUTORIDADES JUDICIALES",
+            },
+            "antecedentes_inhabilidades": {
+                "validation_status": "valid",
+                "required_phrase": "NO REGISTRA INHABILIDAD",
+            },
+        },
+    }
+
+    subject, text_body, html_body = mod._build_background_check_admin_email(summary_item)
+
+    assert subject == "Revision final de antecedentes: PRE_APPROVED"
+    assert "WhatsApp Aprobado:" in text_body
+    assert "WhatsApp Denegado:" in text_body
+    assert "WhatsApp: Aprobado" in html_body
+    assert "WhatsApp: Denegado" in html_body
+    assert "DIAZ+MUNEVAR+DANIEL+NICOLAS" in html_body
+
+
 def test_handler_records_failure_and_raises(monkeypatch):
     stored: list[dict] = []
 
