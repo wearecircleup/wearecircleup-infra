@@ -351,7 +351,7 @@ def test_final_review_summary_prefers_certificate_name_when_certificates_agree(m
     summary = mod._final_review_summary("dpaadbok", "sub-1")
 
     assert summary is not None
-    assert summary["final_review_status"] == "APPROVED"
+    assert summary["final_review_status"] == "PRE_APPROVED"
     assert summary["resolved_document_number"] == "1020802674"
     assert summary["resolved_full_name"] == "BONAPARTE NAPOLEON"
     assert summary["resolved_full_name_source"] == "certificates"
@@ -370,7 +370,7 @@ def test_build_background_check_internal_review_url_includes_prefilled_values(mo
         "resolved_document_number": "1020802674",
         "resolved_full_name": "DIAZ MUNEVAR DANIEL NICOLAS",
         "partition_key": "FORM#dpaadbok#SUBMISSION#qxxcnbmtd1#DOCUMENT#1020802674",
-        "final_review_status": "APPROVED",
+        "final_review_status": "PRE_APPROVED",
         "final_review_errors": ["NOMBRE_NO_COINCIDE", "FECHA_VENCIDA"],
         "judicial_consultation_datetime_text": "08:13:16 AM 09/08/2026",
         "inhabilidades_consultation_datetime_text": "08:11:56 09/08/2026",
@@ -402,7 +402,7 @@ def test_build_background_check_internal_review_url_includes_prefilled_values(mo
     assert "place_of_birth=Bogota" in url
     assert "nationality=Colombiana" in url
     assert "partition_key=FORM%23dpaadbok%23SUBMISSION%23qxxcnbmtd1%23DOCUMENT%231020802674" in url
-    assert "final_review_status=APPROVED" in url
+    assert "final_review_status=PRE_APPROVED" in url
     assert "final_review_errors=NOMBRE_NO_COINCIDE%2CFECHA_VENCIDA" in url
     assert "judicial_date=2026-08-09" in url
     assert "inhabilidades_date=2026-08-09" in url
@@ -419,7 +419,7 @@ def test_build_background_check_internal_review_url_includes_prefilled_values(mo
 
 def test_should_not_resend_background_check_notification_for_same_fingerprint():
     summary_item = {
-        "final_review_status": "APPROVED",
+        "final_review_status": "PRE_APPROVED",
         "final_review_errors": ["NOMBRE_NO_COINCIDE"],
         "resolved_document_number": "1020802674",
         "resolved_full_name": "DIAZ MUNEVAR DANIEL NICOLAS",
@@ -428,6 +428,24 @@ def test_should_not_resend_background_check_notification_for_same_fingerprint():
     summary_item["internal_review_notification_fingerprint"] = mod._background_check_notification_fingerprint(summary_item)
 
     assert mod._should_send_background_check_admin_notification(summary_item) is False
+
+
+def test_background_check_email_status_text_uses_clear_english_labels():
+    summary_item = {
+        "final_review_details": {
+            "antecedentes_judiciales": {
+                "validation_status": "valid",
+                "required_phrase": "NO TIENE ASUNTOS PENDIENTES CON LAS AUTORIDADES JUDICIALES",
+            },
+            "antecedentes_inhabilidades": {
+                "validation_status": "valid",
+                "required_phrase": "NO REGISTRA INHABILIDAD",
+            },
+        }
+    }
+
+    assert mod._background_check_email_status_text(summary_item, "antecedentes_judiciales") == "NO CRIMINAL RECORDS"
+    assert mod._background_check_email_status_text(summary_item, "antecedentes_inhabilidades") == "NO DISQUALIFICATIONS"
 
 
 def test_handler_records_failure_and_raises(monkeypatch):

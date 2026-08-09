@@ -683,7 +683,7 @@ def _final_review_summary(form_id: Any, submission_id: Any) -> dict[str, Any] | 
     elif missing_documents:
         final_review_status = "PENDING_DOCUMENTS"
     else:
-        final_review_status = "APPROVED"
+        final_review_status = "PRE_APPROVED"
 
     partition_key = _background_check_partition_key(
         form_id,
@@ -798,6 +798,21 @@ def _summary_detail(summary_item: dict[str, Any], document_kind: str) -> dict[st
     return item if isinstance(item, dict) else {}
 
 
+def _background_check_email_status_text(summary_item: dict[str, Any], document_kind: str) -> str:
+    detail = _summary_detail(summary_item, document_kind)
+    validation_status = str(detail.get("validation_status") or "").upper()
+    required_phrase = _normalized_ascii_upper(detail.get("required_phrase"))
+
+    if document_kind == "antecedentes_judiciales":
+        if validation_status == "VALID" and required_phrase == "NO TIENE ASUNTOS PENDIENTES CON LAS AUTORIDADES JUDICIALES":
+            return "NO CRIMINAL RECORDS"
+    if document_kind == "antecedentes_inhabilidades":
+        if validation_status == "VALID" and required_phrase == "NO REGISTRA INHABILIDAD":
+            return "NO DISQUALIFICATIONS"
+
+    return validation_status or "PENDING"
+
+
 def _review_payload_field(summary_item: dict[str, Any], field_name: str) -> str | None:
     payload = summary_item.get("review_payload")
     if not isinstance(payload, dict):
@@ -865,12 +880,8 @@ def _build_background_check_admin_email(summary_item: dict[str, Any]) -> tuple[s
     support_url = _background_check_notification_support_url()
     logo_url = _background_check_notification_logo_url()
     final_status = str(summary_item.get("final_review_status") or "PENDING").replace("_", " ")
-    judicial_status = str(summary_item.get("judicial_validation_status") or "pending_reference").replace("_", " ")
-    inhabilidades_status = str(summary_item.get("inhabilidades_validation_status") or "pending_reference").replace("_", " ")
-    errors = summary_item.get("final_review_errors") or []
-    if not isinstance(errors, list):
-        errors = [str(errors)]
-    final_errors = ", ".join(str(error) for error in errors if error) or "sin observaciones registradas"
+    judicial_status = _background_check_email_status_text(summary_item, "antecedentes_judiciales")
+    inhabilidades_status = _background_check_email_status_text(summary_item, "antecedentes_inhabilidades")
 
     intro = (
         "Ya esta lista la respuesta final de la verificacion documental de un voluntario. "
@@ -881,8 +892,7 @@ def _build_background_check_admin_email(summary_item: dict[str, Any]) -> tuple[s
         ("Estado final", final_status),
         ("Antecedentes judiciales", judicial_status),
         ("Inhabilidades", inhabilidades_status),
-        ("Submission ID", str(summary_item.get("submission_id") or "")),
-        ("Observaciones", final_errors),
+        ("Submission ID", str(summary_item.get("submission_id") or "").upper()),
     ]
 
     text_lines = [
@@ -968,7 +978,7 @@ def _build_background_check_admin_email(summary_item: dict[str, Any]) -> tuple[s
 
 
 def _should_send_background_check_admin_notification(summary_item: dict[str, Any]) -> bool:
-    if summary_item.get("final_review_status") not in {"APPROVED", "REJECTED"}:
+    if summary_item.get("final_review_status") not in {"PRE_APPROVED", "REJECTED"}:
         return False
     fingerprint = _background_check_notification_fingerprint(summary_item)
     return not (
