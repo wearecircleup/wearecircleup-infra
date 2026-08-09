@@ -452,6 +452,35 @@ def test_background_check_enqueue_requires_exact_configured_form_id(monkeypatch)
     assert sent_messages == []
 
 
+def test_background_check_review_messages_detect_all_three_document_types():
+    item = {
+        "form_id": "dpaadbok",
+        "submission_id": "sub-1",
+        "answers": [
+            {
+                "question": "Ahora sí tu cédula",
+                "answer": "s3://background-bucket/volunteer-background-checks/dpaadbok/sub-1/ahora-s-tu-c-dula.pdf",
+            },
+            {
+                "question": "Certificado de antecedentes judiciales",
+                "answer": "s3://background-bucket/volunteer-background-checks/dpaadbok/sub-1/certificado-de-antecedentes-judiciales.pdf",
+            },
+            {
+                "question": "Certificado de antecedentes de inhabilidades",
+                "answer": "s3://background-bucket/volunteer-background-checks/dpaadbok/sub-1/certificado-de-antecedentes-de-inhabilidades.pdf",
+            },
+        ],
+    }
+
+    messages = mod._background_check_review_messages(item)
+
+    assert [message["document_kind"] for message in messages] == [
+        "cedula",
+        "antecedentes_judiciales",
+        "antecedentes_inhabilidades",
+    ]
+
+
 def test_volunteer_intent_submission_uses_form_keys_and_contact_indexes(monkeypatch):
     saved: dict[str, object] = {}
 

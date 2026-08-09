@@ -130,6 +130,24 @@ resource "aws_iam_role_policy" "bedrock" {
   })
 }
 
+resource "aws_iam_role_policy" "textract" {
+  name = "${var.lambda_function_name}-textract"
+  role = aws_iam_role.lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "textract:DetectDocumentText"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.lambda_function_name}"
   retention_in_days = 14

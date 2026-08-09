@@ -344,17 +344,24 @@ def _parse_s3_uri(value: Any) -> tuple[str, str] | None:
     return bucket_name, key
 
 
-def _is_background_check_identity_file(question: str, stored_answer: Any) -> bool:
+def _background_check_document_kind(question: str, stored_answer: Any) -> str | None:
     parsed = _parse_s3_uri(stored_answer)
     if parsed is None:
-        return False
+        return None
     _, key = parsed
     if not key.lower().endswith(".pdf"):
-        return False
+        return None
     normalized_question = _ascii_normalized(question)
     normalized_key = _ascii_normalized(os.path.basename(key))
+    combined = f"{normalized_question} {normalized_key}"
+    if "inhabilidad" in combined or "inhabilidades" in combined:
+        return "antecedentes_inhabilidades"
+    if "antecedentes judiciales" in combined or ("judicial" in combined and "antecedente" in combined):
+        return "antecedentes_judiciales"
     identity_markers = ("cedula", "documento de identidad", "documento identidad", "identificacion")
-    return any(marker in normalized_question or marker in normalized_key for marker in identity_markers)
+    if any(marker in combined for marker in identity_markers):
+        return "cedula"
+    return None
 
 
 def _background_check_review_messages(item: dict[str, Any]) -> list[dict[str, Any]]:
@@ -367,7 +374,8 @@ def _background_check_review_messages(item: dict[str, Any]) -> list[dict[str, An
             continue
         question = str(answer.get("question") or "").strip()
         stored_answer = answer.get("answer")
-        if not question or not _is_background_check_identity_file(question, stored_answer):
+        document_kind = _background_check_document_kind(question, stored_answer)
+        if not question or not document_kind:
             continue
         parsed = _parse_s3_uri(stored_answer)
         if parsed is None:
@@ -376,7 +384,7 @@ def _background_check_review_messages(item: dict[str, Any]) -> list[dict[str, An
         messages.append(
             {
                 "source": "youform_webhook",
-                "document_kind": "cedula",
+                "document_kind": document_kind,
                 "form_id": item.get("form_id"),
                 "submission_id": item.get("submission_id"),
                 "submission_pk": item.get("pk"),

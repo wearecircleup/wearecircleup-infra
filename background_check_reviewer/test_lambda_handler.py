@@ -31,14 +31,16 @@ def test_process_job_stores_completed_review(monkeypatch):
     monkeypatch.setattr(mod, "_background_check_form_id", lambda: "dpaadbok")
     monkeypatch.setattr(mod, "_source_submission", lambda job: {"contact_email": "persona@example.com"})
     monkeypatch.setattr(mod, "_download_pdf", lambda bucket, key: b"%PDF-1.4")
-    monkeypatch.setattr(mod, "_render_pdf_pages", lambda pdf_bytes, max_pages: [b"png-page"])
+    monkeypatch.setattr(mod, "_render_pdf_pages", lambda pdf_bytes, max_pages: [b"png-page-1"])
     monkeypatch.setattr(
         mod,
         "_extract_document_with_bedrock",
         lambda images: {
             "tool_input": {
                 "document_type": "cedula_pre_2020",
-                "side_processed": "frente",
+                "document_country": "colombia",
+                "both_sides_present": True,
+                "side_processed": "unica",
                 "fields": {
                     "numero_documento": {"value": "123", "confidence": "confiable"},
                     "apellidos": {"value": "Diaz", "confidence": "confiable"},
@@ -73,6 +75,191 @@ def test_process_job_stores_completed_review(monkeypatch):
     assert stored[0]["sk"] == "SUBMISSION#qxxcnbmtd1#DOCUMENT#cedula"
     assert stored[0]["status"] == "completed"
     assert stored[0]["review_payload"]["document_type"] == "cedula_pre_2020"
+    assert stored[0]["validation_status"] == "valid"
+    assert stored[0]["both_sides_present"] is True
+    assert stored[0]["rendered_page_count"] == 1
+
+
+def test_process_job_marks_invalid_when_pdf_is_not_colombian_cedula(monkeypatch):
+    stored: list[dict] = []
+
+    monkeypatch.setattr(mod, "_background_check_form_id", lambda: "dpaadbok")
+    monkeypatch.setattr(mod, "_source_submission", lambda job: {"contact_email": "persona@example.com"})
+    monkeypatch.setattr(mod, "_download_pdf", lambda bucket, key: b"%PDF-1.4")
+    monkeypatch.setattr(mod, "_render_pdf_pages", lambda pdf_bytes, max_pages: [b"png-page-1", b"png-page-2"])
+    monkeypatch.setattr(
+        mod,
+        "_extract_document_with_bedrock",
+        lambda images: {
+            "tool_input": {
+                "document_type": "unsupported_document",
+                "document_country": "otro",
+                "both_sides_present": False,
+                "side_processed": "unica",
+                "fields": {
+                    "numero_documento": {"value": None, "confidence": "no_aplica"},
+                    "apellidos": {"value": None, "confidence": "no_aplica"},
+                    "nombres": {"value": None, "confidence": "no_aplica"},
+                },
+            },
+            "usage": {"inputTokens": 1, "outputTokens": 1},
+            "stop_reason": "tool_use",
+        },
+    )
+    monkeypatch.setattr(mod, "_bedrock_model_id", lambda: "anthropic.claude-sonnet-5")
+    monkeypatch.setattr(mod, "_store_review", lambda item: stored.append(item))
+
+    result = mod._process_job(
+        {
+            "form_id": "dpaadbok",
+            "submission_id": "qxxcnbmtd1",
+            "submission_pk": "FORM#dpaadbok",
+            "submission_sk": "SUBMISSION#qxxcnbmtd1",
+            "document_kind": "cedula",
+            "question": "Ahora sÃ­ tu cÃ©dula",
+            "s3_uri": "s3://bucket/volunteer-background-checks/dpaadbok/qxxcnbmtd1/ahora-s-tu-c-dula.pdf",
+            "s3_bucket": "bucket",
+            "s3_key": "volunteer-background-checks/dpaadbok/qxxcnbmtd1/ahora-s-tu-c-dula.pdf",
+            "contact_name": "Nicolas Diaz",
+            "contact_email": "persona@example.com",
+        }
+    )
+
+    assert result["status"] == "completed"
+    assert stored[0]["validation_status"] == "invalid"
+    assert "unsupported_identity_document" in stored[0]["validation_errors"]
+    assert "document_not_colombian" in stored[0]["validation_errors"]
+    assert "both_sides_not_detected" in stored[0]["validation_errors"]
+
+
+def test_process_job_uses_textract_for_judicial_certificate(monkeypatch):
+    stored: list[dict] = []
+
+    monkeypatch.setattr(mod, "_background_check_form_id", lambda: "dpaadbok")
+    monkeypatch.setattr(mod, "_source_submission", lambda job: {"contact_email": "persona@example.com"})
+    monkeypatch.setattr(mod, "_download_pdf", lambda bucket, key: b"%PDF-1.4")
+    monkeypatch.setattr(
+        mod,
+        "_get_review_item",
+        lambda form_id, submission_id, document_kind: {
+            "review_payload": {
+                "fields": {
+                    "numero_documento": {"value": "1020802674", "confidence": "confiable"},
+                    "apellidos": {"value": "DIAZ MUNEVAR", "confidence": "confiable"},
+                    "nombres": {"value": "DANIEL NICOLAS", "confidence": "confiable"},
+                }
+            }
+        }
+        if document_kind == "cedula"
+        else None,
+    )
+    monkeypatch.setattr(
+        mod,
+        "_extract_text_with_textract",
+        lambda pdf_bytes: {
+            "lines": [
+                "Consulta en línea de Antecedentes Penales y Requerimientos Judiciales",
+                "Que siendo las 08:13:16 AM horas del 09/08/2026, el ciudadano identificado con:",
+                "Cédula de Ciudadanía N° 1020802674",
+                "Apellidos y Nombres: DIAZ MUNEVAR DANIEL NICOLAS",
+                "NO TIENE ASUNTOS PENDIENTES CON LAS AUTORIDADES JUDICIALES",
+            ],
+            "text": (
+                "Consulta en línea de Antecedentes Penales y Requerimientos Judiciales\n"
+                "Que siendo las 08:13:16 AM horas del 09/08/2026, el ciudadano identificado con:\n"
+                "Cédula de Ciudadanía N° 1020802674\n"
+                "Apellidos y Nombres: DIAZ MUNEVAR DANIEL NICOLAS\n"
+                "NO TIENE ASUNTOS PENDIENTES CON LAS AUTORIDADES JUDICIALES"
+            ),
+            "page_count_detected": 1,
+        },
+    )
+    monkeypatch.setattr(mod, "_bedrock_model_id", lambda: "anthropic.claude-sonnet-5")
+    monkeypatch.setattr(mod, "_store_review", lambda item: stored.append(item))
+
+    result = mod._process_job(
+        {
+            "form_id": "dpaadbok",
+            "submission_id": "qxxcnbmtd1",
+            "submission_pk": "FORM#dpaadbok",
+            "submission_sk": "SUBMISSION#qxxcnbmtd1",
+            "document_kind": "antecedentes_judiciales",
+            "question": "Certificado de antecedentes judiciales",
+            "s3_uri": "s3://bucket/volunteer-background-checks/dpaadbok/qxxcnbmtd1/certificado-de-antecedentes-judiciales.pdf",
+            "s3_bucket": "bucket",
+            "s3_key": "volunteer-background-checks/dpaadbok/qxxcnbmtd1/certificado-de-antecedentes-judiciales.pdf",
+            "contact_name": "Nicolas Diaz",
+            "contact_email": "persona@example.com",
+        }
+    )
+
+    assert result["status"] == "completed"
+    assert stored[0]["status"] == "completed"
+    assert stored[0]["review_engine"] == "textract_detect_document_text"
+    assert stored[0]["validation_status"] == "valid"
+    assert stored[0]["consultation_datetime_text"] == "08:13:16 AM 09/08/2026"
+    assert stored[0]["matched_document_number"] is True
+    assert stored[0]["matched_full_name"] is True
+    assert stored[0]["matched_required_phrase"] is True
+
+
+def test_certificate_validation_marks_invalid_on_phrase_mismatch():
+    cedula_review = {
+        "review_payload": {
+            "fields": {
+                "numero_documento": {"value": "1020802674", "confidence": "confiable"},
+                "apellidos": {"value": "DIAZ MUNEVAR", "confidence": "confiable"},
+                "nombres": {"value": "DANIEL NICOLAS", "confidence": "confiable"},
+            }
+        }
+    }
+
+    validation = mod._certificate_validation_result(
+        "antecedentes_inhabilidades",
+        (
+            "Que siendo las 08:11:56 horas del 09/08/2026, el ciudadano identificado con cédula de ciudadanía "
+            "No. 1020802674, Apellidos y Nombres DIAZ MUNEVAR DANIEL NICOLAS REGISTRA INHABILIDAD"
+        ),
+        cedula_review,
+    )
+
+    assert validation["validation_status"] == "invalid"
+    assert "required_phrase_mismatch" in validation["validation_errors"]
+
+
+def test_reconcile_certificate_reviews_after_cedula(monkeypatch):
+    stored: list[dict] = []
+    cedula_item = {
+        "pk": "FORM#dpaadbok",
+        "sk": "SUBMISSION#sub-1#DOCUMENT#cedula",
+        "document_kind": "cedula",
+        "review_payload": {
+            "fields": {
+                "numero_documento": {"value": "1020802674", "confidence": "confiable"},
+                "apellidos": {"value": "DIAZ MUNEVAR", "confidence": "confiable"},
+                "nombres": {"value": "DANIEL NICOLAS", "confidence": "confiable"},
+            }
+        },
+    }
+    pending_certificate = {
+        "pk": "FORM#dpaadbok",
+        "sk": "SUBMISSION#sub-1#DOCUMENT#antecedentes_inhabilidades",
+        "document_kind": "antecedentes_inhabilidades",
+        "review_text": (
+            "Que siendo las 08:11:56 horas del 09/08/2026, el ciudadano identificado con cédula de ciudadanía "
+            "No. 1020802674, Apellidos y Nombres DIAZ MUNEVAR DANIEL NICOLAS NO REGISTRA INHABILIDAD"
+        ),
+    }
+
+    monkeypatch.setattr(mod, "_get_review_item", lambda form_id, submission_id, document_kind: cedula_item)
+    monkeypatch.setattr(mod, "_query_submission_review_items", lambda submission_id: [cedula_item, pending_certificate])
+    monkeypatch.setattr(mod, "_store_review", lambda item: stored.append(item))
+
+    reconciled = mod._reconcile_certificate_reviews("dpaadbok", "sub-1")
+
+    assert reconciled[0]["document_kind"] == "antecedentes_inhabilidades"
+    assert reconciled[0]["validation_status"] == "valid"
+    assert stored[0]["validation_status"] == "valid"
 
 
 def test_handler_records_failure_and_raises(monkeypatch):
