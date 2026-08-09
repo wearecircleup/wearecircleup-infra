@@ -181,7 +181,7 @@ def _download_pdf(bucket_name: str, key: str) -> bytes:
 
 
 def _render_pdf_pages(pdf_bytes: bytes, max_pages: int) -> list[bytes]:
-    import fitz  # type: ignore
+    import pymupdf as fitz  # type: ignore
 
     document = fitz.open(stream=pdf_bytes, filetype="pdf")
     images: list[bytes] = []

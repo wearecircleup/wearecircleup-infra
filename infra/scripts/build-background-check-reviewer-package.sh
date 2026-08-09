@@ -11,6 +11,11 @@ ZIP_PATH="${ARTIFACT_DIR}/background_check_reviewer_lambda.zip"
 rm -rf "${BUILD_DIR}" "${ZIP_PATH}"
 mkdir -p "${BUILD_DIR}"
 
+python -m pip install --upgrade pip
+python -m pip install \
+  --target "${BUILD_DIR}" \
+  --requirement "${SERVICE_DIR}/requirements-lambda.txt"
+
 cp "${SERVICE_DIR}/lambda_handler.py" "${BUILD_DIR}/lambda_handler.py"
 
 (
