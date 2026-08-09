@@ -355,8 +355,8 @@ def test_final_review_summary_prefers_certificate_name_when_certificates_agree(m
     assert summary["resolved_document_number"] == "1020802674"
     assert summary["resolved_full_name"] == "BONAPARTE NAPOLEON"
     assert summary["resolved_full_name_source"] == "certificates"
-    assert summary["partition_key"] == "SUBMISSION#sub-1#DOCUMENT#1020802674"
-    assert summary["gsi4pk"] == "PARTITION_KEY#SUBMISSION#sub-1#DOCUMENT#1020802674"
+    assert summary["partition_key"] == "FORM#dpaadbok#SUBMISSION#sub-1#DOCUMENT#1020802674"
+    assert summary["gsi4pk"] == "PARTITION_KEY#FORM#dpaadbok#SUBMISSION#sub-1#DOCUMENT#1020802674"
 
 
 def test_build_background_check_internal_review_url_includes_prefilled_values(monkeypatch):
@@ -369,7 +369,7 @@ def test_build_background_check_internal_review_url_includes_prefilled_values(mo
         "identity_document_number": "1020802674",
         "resolved_document_number": "1020802674",
         "resolved_full_name": "DIAZ MUNEVAR DANIEL NICOLAS",
-        "partition_key": "SUBMISSION#qxxcnbmtd1#DOCUMENT#1020802674",
+        "partition_key": "FORM#dpaadbok#SUBMISSION#qxxcnbmtd1#DOCUMENT#1020802674",
         "final_review_status": "APPROVED",
         "final_review_errors": ["NOMBRE_NO_COINCIDE", "FECHA_VENCIDA"],
         "judicial_consultation_datetime_text": "08:13:16 AM 09/08/2026",
@@ -401,7 +401,7 @@ def test_build_background_check_internal_review_url_includes_prefilled_values(mo
     assert "date_of_birth=1994-11-03" in url
     assert "place_of_birth=Bogota" in url
     assert "nationality=Colombiana" in url
-    assert "partition_key=SUBMISSION%23qxxcnbmtd1%23DOCUMENT%231020802674" in url
+    assert "partition_key=FORM%23dpaadbok%23SUBMISSION%23qxxcnbmtd1%23DOCUMENT%231020802674" in url
     assert "final_review_status=APPROVED" in url
     assert "final_review_errors=NOMBRE_NO_COINCIDE%2CFECHA_VENCIDA" in url
     assert "judicial_date=2026-08-09" in url

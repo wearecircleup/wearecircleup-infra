@@ -235,12 +235,13 @@ def _review_item_key(form_id: Any, submission_id: Any, document_kind: str) -> di
     }
 
 
-def _background_check_partition_key(submission_id: Any, document_number: Any) -> str | None:
+def _background_check_partition_key(form_id: Any, submission_id: Any, document_number: Any) -> str | None:
+    normalized_form_id = str(form_id or "").strip()
     normalized_submission_id = str(submission_id or "").strip()
     normalized_document_number = _normalized_digits(document_number)
-    if not normalized_submission_id or not normalized_document_number:
+    if not normalized_form_id or not normalized_submission_id or not normalized_document_number:
         return None
-    return f"SUBMISSION#{normalized_submission_id}#DOCUMENT#{normalized_document_number}"
+    return f"FORM#{normalized_form_id}#SUBMISSION#{normalized_submission_id}#DOCUMENT#{normalized_document_number}"
 
 
 def _get_review_item(form_id: Any, submission_id: Any, document_kind: str) -> dict[str, Any] | None:
@@ -684,7 +685,11 @@ def _final_review_summary(form_id: Any, submission_id: Any) -> dict[str, Any] | 
     else:
         final_review_status = "APPROVED"
 
-    partition_key = _background_check_partition_key(submission_id, resolved_number or cedula_identity.get("document_number"))
+    partition_key = _background_check_partition_key(
+        form_id,
+        submission_id,
+        resolved_number or cedula_identity.get("document_number"),
+    )
     normalized_errors = sorted(set(str(error).upper() for error in errors if error))
 
     return {
