@@ -38,6 +38,11 @@ locals {
   youform_volunteer_intent_reply_to    = "hola@circleup.com.co"
   youform_volunteer_intent_logo        = "https://wearecircleup-prod-public-assets-311923415472-us-east-1.s3.us-east-1.amazonaws.com/email-assets/logo.png"
   youform_background_check_table       = "wearecircleup-prod-youform-volunteer-background-checks"
+  background_check_reviews_table       = "wearecircleup-prod-background-check-reviews"
+  background_check_reviewer_lambda     = "wearecircleup-prod-background-check-reviewer"
+  background_check_reviewer_role       = "wearecircleup-prod-background-check-reviewer-role"
+  background_check_review_queue        = "wearecircleup-prod-background-check-review"
+  background_check_review_dlq          = "wearecircleup-prod-background-check-review-dlq"
   youform_signatures_bucket            = "wearecircleup-prod-youform-signatures-311923415472-us-east-1"
   youform_background_check_bucket      = "wearecircleup-prod-bg-check-files-311923415472-us-east-1"
 

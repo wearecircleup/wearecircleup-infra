@@ -88,6 +88,16 @@ variable "volunteer_background_check_submissions_table_name" {
   type        = string
 }
 
+variable "background_check_review_queue_arn" {
+  description = "SQS queue ARN used to enqueue background check reviews."
+  type        = string
+}
+
+variable "background_check_review_queue_url" {
+  description = "SQS queue URL used to enqueue background check reviews."
+  type        = string
+}
+
 variable "volunteer_intent_proposal_submissions_table_arn" {
   description = "DynamoDB table ARN used to store volunteer intent proposal submissions."
   type        = string

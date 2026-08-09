@@ -127,3 +127,28 @@ output "youform_signatures_bucket_name" {
   description = "Private S3 bucket name storing copied YouForm signatures."
   value       = module.youform_signatures_s3.bucket_name
 }
+
+output "youform_background_check_submissions_table_name" {
+  description = "DynamoDB table name storing volunteer background check submissions."
+  value       = module.youform_background_check_submissions_dynamodb.table_name
+}
+
+output "background_check_reviews_table_name" {
+  description = "DynamoDB table name storing background check review results."
+  value       = module.background_check_reviews_dynamodb.table_name
+}
+
+output "background_check_reviewer_lambda_function_name" {
+  description = "Lambda function name consuming background check review jobs."
+  value       = module.background_check_review_worker.lambda_function_name
+}
+
+output "background_check_review_queue_name" {
+  description = "SQS queue name receiving background check review jobs."
+  value       = module.background_check_review_sqs.queue_name
+}
+
+output "background_check_review_queue_url" {
+  description = "SQS queue URL receiving background check review jobs."
+  value       = module.background_check_review_sqs.queue_url
+}

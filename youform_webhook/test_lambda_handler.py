@@ -1,4 +1,5 @@
 import lambda_handler as mod
+import pytest
 from urllib.error import HTTPError
 
 
@@ -344,6 +345,111 @@ def test_reconciliation_skips_non_authorized_form(monkeypatch):
         "reconciled": False,
         "reason": "form_id_not_authorized",
     }
+
+
+def test_handler_enqueues_background_check_cedula_pdf(monkeypatch):
+    saved: dict[str, object] = {}
+    uploaded: dict[str, object] = {}
+    sent_messages: list[dict[str, object]] = []
+
+    class FakeBackgroundTable:
+        def put_item(self, Item):
+            saved["Item"] = Item
+
+    class FakeS3:
+        def put_object(self, **kwargs):
+            uploaded.update(kwargs)
+
+    class FakeSQS:
+        def send_message(self, **kwargs):
+            sent_messages.append(kwargs)
+            return {"MessageId": "msg-1"}
+
+    class FakeHeaders:
+        def get_content_type(self):
+            return "application/pdf"
+
+    class FakeResponse:
+        def __init__(self, content: bytes):
+            self._content = content
+            self.headers = FakeHeaders()
+
+        def read(self):
+            return self._content
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+    parsed_body = {
+        "submission_id": "qxxcnbmtd1",
+        "form_id": "dpaadbok",
+        "form_name": "Volunteer Background Check Compliance",
+        "event_type": "submission",
+        "completed_at": "2026-08-09T12:00:00.000000Z",
+        "answers": {
+            "Ahora sí tu cédula": "https://files.youform.com/carta.pdf",
+            "Correo": "persona@example.com",
+            "Teléfono": "+573001112233",
+        },
+    }
+
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID", "dpaadbok")
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_SUBMISSIONS_TABLE_NAME", "background-table")
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_FILES_BUCKET_NAME", "background-bucket")
+    monkeypatch.setenv("BACKGROUND_CHECK_REVIEW_QUEUE_URL", "https://sqs.us-east-1.amazonaws.com/123/background")
+
+    def fake_dynamodb_table(table_name: str):
+        if table_name == "background-table":
+            return FakeBackgroundTable()
+        raise AssertionError(f"Unexpected table: {table_name}")
+
+    monkeypatch.setattr(mod, "_dynamodb_table", fake_dynamodb_table)
+    monkeypatch.setattr(mod, "_s3_client", lambda: FakeS3())
+    monkeypatch.setattr(mod, "_sqs_client", lambda: FakeSQS())
+    monkeypatch.setattr(mod, "urlopen", lambda request, timeout=20: FakeResponse(b"pdf-binary"))
+
+    response = mod.handler({"body": mod.json.dumps(parsed_body)}, None)
+    payload = mod.json.loads(response["body"])
+    message_body = mod.json.loads(sent_messages[0]["MessageBody"])
+
+    assert response["statusCode"] == 200
+    assert payload["background_check_reviews"][0]["message_id"] == "msg-1"
+    assert saved["Item"]["pk"] == "FORM#dpaadbok"
+    assert uploaded["Key"] == "volunteer-background-checks/dpaadbok/qxxcnbmtd1/ahora-s-tu-c-dula.pdf"
+    assert message_body["document_kind"] == "cedula"
+    assert message_body["s3_uri"] == "s3://background-bucket/volunteer-background-checks/dpaadbok/qxxcnbmtd1/ahora-s-tu-c-dula.pdf"
+
+
+def test_background_check_enqueue_requires_exact_configured_form_id(monkeypatch):
+    sent_messages: list[dict[str, object]] = []
+
+    class FakeSQS:
+        def send_message(self, **kwargs):
+            sent_messages.append(kwargs)
+            return {"MessageId": "msg-1"}
+
+    monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID", "dpaadbok")
+    monkeypatch.setenv("BACKGROUND_CHECK_REVIEW_QUEUE_URL", "https://sqs.us-east-1.amazonaws.com/123/background")
+    monkeypatch.setattr(mod, "_sqs_client", lambda: FakeSQS())
+
+    result = mod._enqueue_background_check_reviews(
+        {
+            "form_id": "otro-form",
+            "submission_id": "sub-1",
+            "answers": [
+                {
+                    "question": "Ahora sí tu cédula",
+                    "answer": "s3://background-bucket/volunteer-background-checks/dpaadbok/sub-1/ahora-s-tu-c-dula.pdf",
+                }
+            ],
+        }
+    )
+
+    assert result == []
+    assert sent_messages == []
 
 
 def test_volunteer_intent_submission_uses_form_keys_and_contact_indexes(monkeypatch):

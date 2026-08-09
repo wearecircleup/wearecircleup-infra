@@ -77,6 +77,10 @@ jobs:
         working-directory: .
         run: bash ./infra/scripts/build-minor-authorization-reminder-package.sh
 
+      - name: Build background_check_reviewer Lambda package
+        working-directory: .
+        run: bash ./infra/scripts/build-background-check-reviewer-package.sh
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
         with:

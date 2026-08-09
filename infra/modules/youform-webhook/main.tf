@@ -108,6 +108,26 @@ resource "aws_iam_role_policy" "ses" {
   })
 }
 
+resource "aws_iam_role_policy" "sqs" {
+  name = "${var.lambda_function_name}-sqs"
+  role = aws_iam_role.lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage"
+        ]
+        Resource = [
+          var.background_check_review_queue_arn
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.lambda_function_name}"
   retention_in_days = 14
@@ -139,6 +159,7 @@ resource "aws_lambda_function" "this" {
       VOLUNTEER_INTENT_NOTIFICATION_TO_EMAIL            = var.volunteer_intent_notification_to_email
       VOLUNTEER_INTENT_NOTIFICATION_REPLY_TO_EMAIL      = var.volunteer_intent_notification_reply_to_email
       VOLUNTEER_INTENT_NOTIFICATION_LOGO_URL            = var.volunteer_intent_notification_logo_url
+      BACKGROUND_CHECK_REVIEW_QUEUE_URL                 = var.background_check_review_queue_url
     }
   }
 

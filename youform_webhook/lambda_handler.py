@@ -4,6 +4,7 @@ import logging
 import mimetypes
 import os
 import re
+import unicodedata
 from datetime import datetime, timezone
 from html import escape
 from typing import Any
@@ -55,6 +56,11 @@ def _normalized_question_key(value: str) -> str:
     return " ".join(str(cleaned).strip().lower().split())
 
 
+def _ascii_normalized(value: str) -> str:
+    cleaned = str(_clean_text(value) or "").strip().lower()
+    return unicodedata.normalize("NFKD", cleaned).encode("ascii", "ignore").decode("ascii")
+
+
 def _dynamodb_table(table_name: str):
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     return boto3.resource("dynamodb", region_name=region).Table(table_name)
@@ -63,6 +69,11 @@ def _dynamodb_table(table_name: str):
 def _ses_client():
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     return boto3.client("sesv2", region_name=region)
+
+
+def _sqs_client():
+    region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+    return boto3.client("sqs", region_name=region)
 
 
 def _load_secret(secret_id: str) -> dict[str, str]:
@@ -117,6 +128,7 @@ def _configured_form_routes() -> dict[str, dict[str, Any]]:
             "preserve_signature_key": True,
             "key_strategy": "eventbrite_event",
             "admin_notification_type": None,
+            "background_check_processing": False,
         }
 
     proposal_form_id = _configured_form_id(
@@ -133,6 +145,7 @@ def _configured_form_routes() -> dict[str, dict[str, Any]]:
             "preserve_signature_key": False,
             "key_strategy": "form",
             "admin_notification_type": "volunteer_intent_proposal",
+            "background_check_processing": False,
         }
 
     background_form_id = _configured_form_id(
@@ -149,6 +162,7 @@ def _configured_form_routes() -> dict[str, dict[str, Any]]:
             "preserve_signature_key": False,
             "key_strategy": "form",
             "admin_notification_type": None,
+            "background_check_processing": True,
         }
 
     return routes
@@ -297,6 +311,128 @@ def _normalize_answers(parsed_body: dict[str, Any], storage_config: dict[str, An
                 )
         normalized.append({"question": str(normalized_question), "answer": normalized_answer})
     return normalized
+
+
+def _background_check_queue_url() -> str | None:
+    value = os.getenv("BACKGROUND_CHECK_REVIEW_QUEUE_URL")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _background_check_form_id() -> str:
+    secret_id = os.getenv("EVENTBRITE_SECRET_ID")
+    if secret_id:
+        secret = _load_secret(secret_id)
+        value = (secret.get("VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID") or "").strip()
+        if value:
+            return value
+        raise RuntimeError(f"VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID is missing in secret {secret_id}.")
+    value = (os.getenv("VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID") or "").strip()
+    if value:
+        return value
+    raise RuntimeError("VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID is not configured.")
+
+
+def _parse_s3_uri(value: Any) -> tuple[str, str] | None:
+    if not isinstance(value, str) or not value.startswith("s3://"):
+        return None
+    without_scheme = value[5:]
+    bucket_name, _, key = without_scheme.partition("/")
+    if not bucket_name or not key:
+        return None
+    return bucket_name, key
+
+
+def _is_background_check_identity_file(question: str, stored_answer: Any) -> bool:
+    parsed = _parse_s3_uri(stored_answer)
+    if parsed is None:
+        return False
+    _, key = parsed
+    if not key.lower().endswith(".pdf"):
+        return False
+    normalized_question = _ascii_normalized(question)
+    normalized_key = _ascii_normalized(os.path.basename(key))
+    identity_markers = ("cedula", "documento de identidad", "documento identidad", "identificacion")
+    return any(marker in normalized_question or marker in normalized_key for marker in identity_markers)
+
+
+def _background_check_review_messages(item: dict[str, Any]) -> list[dict[str, Any]]:
+    answers = item.get("answers")
+    if not isinstance(answers, list):
+        return []
+    messages: list[dict[str, Any]] = []
+    for answer in answers:
+        if not isinstance(answer, dict):
+            continue
+        question = str(answer.get("question") or "").strip()
+        stored_answer = answer.get("answer")
+        if not question or not _is_background_check_identity_file(question, stored_answer):
+            continue
+        parsed = _parse_s3_uri(stored_answer)
+        if parsed is None:
+            continue
+        bucket_name, key = parsed
+        messages.append(
+            {
+                "source": "youform_webhook",
+                "document_kind": "cedula",
+                "form_id": item.get("form_id"),
+                "submission_id": item.get("submission_id"),
+                "submission_pk": item.get("pk"),
+                "submission_sk": item.get("sk"),
+                "question": question,
+                "s3_uri": stored_answer,
+                "s3_bucket": bucket_name,
+                "s3_key": key,
+                "contact_name": item.get("contact_name"),
+                "contact_email": item.get("contact_email"),
+                "contact_phone": item.get("contact_phone"),
+                "completed_at": item.get("completed_at"),
+            }
+        )
+    return messages
+
+
+def _enqueue_background_check_reviews(item: dict[str, Any]) -> list[dict[str, Any]]:
+    # This queue is reserved exclusively for the compliance/background-check form.
+    # Even if another form accidentally reaches this branch, we must refuse to
+    # enqueue it to avoid mixing unrelated submissions into the reviewer flow.
+    if str(item.get("form_id") or "").strip() != _background_check_form_id():
+        logger.info(
+            "Skipping background check enqueue for submission %s because form_id %s does not match the configured compliance form.",
+            item.get("submission_id"),
+            item.get("form_id"),
+        )
+        return []
+    queue_url = _background_check_queue_url()
+    if not queue_url:
+        logger.info(
+            "BACKGROUND_CHECK_REVIEW_QUEUE_URL is not configured. Skipping background check enqueue for submission %s.",
+            item.get("submission_id"),
+        )
+        return []
+    messages = _background_check_review_messages(item)
+    if not messages:
+        return []
+    published: list[dict[str, Any]] = []
+    client = _sqs_client()
+    for message in messages:
+        response = client.send_message(
+            QueueUrl=queue_url,
+            MessageBody=json.dumps(message, ensure_ascii=False, default=str),
+        )
+        published.append(
+            {
+                "submission_id": message.get("submission_id"),
+                "document_kind": message.get("document_kind"),
+                "question": message.get("question"),
+                "s3_uri": message.get("s3_uri"),
+                "message_id": response.get("MessageId"),
+            }
+        )
+    logger.info("Enqueued background check review jobs: %s", json.dumps(published, ensure_ascii=False, default=str))
+    return published
 
 
 def _detected_file_answers(parsed_body: dict[str, Any]) -> list[dict[str, str]]:
@@ -875,6 +1011,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     stored = False
     reconciliation: dict[str, Any] | None = None
     admin_notification: dict[str, Any] | None = None
+    background_check_reviews: list[dict[str, Any]] | None = None
     storage_route: dict[str, Any] | None = None
     stored_item: dict[str, Any] | None = None
     detected_file_answers: list[dict[str, str]] = []
@@ -891,6 +1028,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "reconcile_minor_authorization": storage_config.get("reconcile_minor_authorization"),
                 "key_strategy": storage_config.get("key_strategy"),
                 "admin_notification_type": storage_config.get("admin_notification_type"),
+                "background_check_processing": storage_config.get("background_check_processing"),
             }
         stored, item = _store_submission(parsed_body)
         stored_item = item
@@ -908,6 +1046,8 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                     "message_id": None,
                 }
                 _record_admin_notification_result(str(storage_config["table_name"]), item, admin_notification, str(exc))
+        if stored and item is not None and storage_config and storage_config.get("background_check_processing"):
+            background_check_reviews = _enqueue_background_check_reviews(item)
 
     logger.info(
         "Received YouForm webhook: %s",
@@ -921,6 +1061,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "stored": stored,
                 "stored_item": stored_item,
                 "admin_notification": admin_notification,
+                "background_check_reviews": background_check_reviews,
                 "reconciliation": reconciliation,
             },
             ensure_ascii=False,
@@ -937,6 +1078,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "message": "YouForm webhook received.",
                 "stored": stored,
                 "admin_notification": admin_notification,
+                "background_check_reviews": background_check_reviews,
                 "reconciliation": reconciliation,
             }
         ),
