@@ -35,7 +35,7 @@ VOLUNTEER_INTENT_REQUESTED_TIME_QUESTION = "¿A qué hora?"
 VOLUNTEER_INTENT_ADMIN_QUESTION = "¿Tienes alguna pregunta para nosotros?"
 UNKNOWN_EVENT_ID = "UNKNOWN_EVENT"
 PARTITION_KEY_QUESTION = "Partition key"
-BACKGROUND_CHECK_APPROVAL_QUESTION = "Estado de aprobaciÃ³n"
+BACKGROUND_CHECK_APPROVAL_QUESTION = "Estado de aprobación"
 
 
 def _utc_now() -> str:
@@ -72,7 +72,11 @@ def _ascii_normalized(value: str) -> str:
             break
         repaired = candidate
     cleaned = str(_clean_text(repaired) or "").strip().lower()
-    return unicodedata.normalize("NFKD", cleaned).encode("ascii", "ignore").decode("ascii")
+    ascii_text = unicodedata.normalize("NFKD", cleaned).encode("ascii", "ignore").decode("ascii")
+    # Some webhook payloads arrive with replacement characters like "?" after
+    # a lossy decode. We collapse punctuation so question matching keeps
+    # working even when accents were mangled upstream.
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", ascii_text).split())
 
 
 def _dynamodb_table(table_name: str):
@@ -243,8 +247,14 @@ def _is_background_check_internal_review(parsed_body: dict[str, Any]) -> bool:
     if str(parsed_body.get("form_id") or "").strip() != _background_internal_review_form_id():
         return False
     answers = _answer_lookup(parsed_body)
-    partition_key = answers.get(_normalized_question_key(PARTITION_KEY_QUESTION))
-    approval_status = answers.get(_normalized_question_key(BACKGROUND_CHECK_APPROVAL_QUESTION))
+    partition_key = _extract_scalar_answer(answers, PARTITION_KEY_QUESTION)
+    approval_status = _extract_scalar_answer(
+        answers,
+        BACKGROUND_CHECK_APPROVAL_QUESTION,
+        "estado de aprobacion",
+        "estado de aprobaci",
+        "estado aprobacion",
+    )
     return isinstance(partition_key, str) and partition_key.startswith("FORM#") and isinstance(approval_status, str)
 
 
