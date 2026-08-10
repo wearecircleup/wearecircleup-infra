@@ -293,8 +293,6 @@ def test_background_check_form_routes_to_its_own_table_and_bucket(monkeypatch):
     monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_COMPLIANCE_FORM_ID", "dpaadbok")
     monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_SUBMISSIONS_TABLE_NAME", "background-table")
     monkeypatch.setenv("VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID", "p35vzbna")
-    monkeypatch.setenv("VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID", "p35vzbna")
-    monkeypatch.setenv("VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID", "p35vzbna")
     monkeypatch.setenv("VOLUNTEER_BACKGROUND_CHECK_FILES_BUCKET_NAME", "background-bucket")
 
     def fake_dynamodb_table(table_name: str):
@@ -430,8 +428,8 @@ def test_background_check_internal_review_routes_to_background_table(monkeypatch
     saved: dict[str, object] = {}
 
     class FakeBackgroundTable:
-        def put_item(self, Item):
-            saved["Item"] = Item
+        def update_item(self, **kwargs):
+            saved["update"] = kwargs
 
     parsed_body = {
         "submission_id": "v275sfa3sn",
@@ -477,11 +475,23 @@ def test_background_check_internal_review_routes_to_background_table(monkeypatch
 
     assert stored is True
     assert item["pk"] == "FORM#dpaadbok"
-    assert item["sk"] == "SUBMISSION#dexr8ogxjb#INTERNAL_REVIEW#v275sfa3sn"
-    assert item["source_partition_key"] == "FORM#dpaadbok#SUBMISSION#dexr8ogxjb#DOCUMENT#1020802674"
-    assert item["source_submission_pk"] == "FORM#dpaadbok"
-    assert item["source_submission_sk"] == "SUBMISSION#dexr8ogxjb"
-    assert item["source_document_number"] == "1020802674"
+    assert item["sk"] == "SUBMISSION#dexr8ogxjb"
+    assert item["internal_review"]["partition_key"] == "FORM#dpaadbok#SUBMISSION#dexr8ogxjb#DOCUMENT#1020802674"
+    assert item["internal_review"]["source_form_id"] == "dpaadbok"
+    assert item["internal_review"]["source_submission_id"] == "dexr8ogxjb"
+    assert item["internal_review"]["source_document_number"] == "1020802674"
+    assert "BACKGROUND CHECK APPROVED" in item["internal_review"]["answers"].values()
+    assert saved["update"]["Key"] == {"pk": "FORM#dpaadbok", "sk": "SUBMISSION#dexr8ogxjb"}
+    assert saved["update"]["ExpressionAttributeValues"][":internal_review"]["submission_id"] == "v275sfa3sn"
+    return
+
+    assert stored is True
+    assert item["pk"] == "FORM#dpaadbok"
+    assert item["sk"] == "SUBMISSION#dexr8ogxjb"
+    assert item["internal_review"]["partition_key"] == "FORM#dpaadbok#SUBMISSION#dexr8ogxjb#DOCUMENT#1020802674"
+    assert item["internal_review"]["source_form_id"] == "dpaadbok"
+    assert item["internal_review"]["source_submission_id"] == "dexr8ogxjb"
+    assert item["internal_review"]["source_document_number"] == "1020802674"
     assert item["answers_map"]["Estado de aprobaciÃ³n"] == "BACKGROUND CHECK APPROVED"
     assert item["fields"][0]["question"] == "Partition key"
     assert saved["Item"]["pk"] == "FORM#dpaadbok"

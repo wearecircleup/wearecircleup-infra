@@ -871,10 +871,58 @@ def _build_submission_item(parsed_body: dict[str, Any], storage_config: dict[str
                 "source_submission_pk": parsed_partition_key["source_submission_pk"] if parsed_partition_key else None,
                 "source_submission_sk": parsed_partition_key["source_submission_sk"] if parsed_partition_key else None,
                 "answers_map": normalized_answers,
-                "fields": _deep_clean(parsed_body.get("fields")),
             }
         )
     return {key: value for key, value in item.items() if value is not None}
+
+
+def _build_background_internal_review_payload(parsed_body: dict[str, Any]) -> dict[str, Any] | None:
+    answer_lookup = _answer_lookup(parsed_body)
+    partition_key = _extract_scalar_answer(answer_lookup, PARTITION_KEY_QUESTION)
+    parsed_partition_key = _parse_background_partition_key(partition_key)
+    if not parsed_partition_key:
+        return None
+
+    return {
+        "pk": parsed_partition_key["source_submission_pk"],
+        "sk": parsed_partition_key["source_submission_sk"],
+        "internal_review": {
+            "partition_key": parsed_partition_key["partition_key"],
+            "source_form_id": parsed_partition_key["source_form_id"],
+            "source_submission_id": parsed_partition_key["source_submission_id"],
+            "source_document_number": parsed_partition_key["source_document_number"],
+            "submission_id": parsed_body.get("submission_id"),
+            "form_id": parsed_body.get("form_id"),
+            "form_name": parsed_body.get("form_name"),
+            "youform_event_id": parsed_body.get("event_id"),
+            "event_type": parsed_body.get("event_type"),
+            "started_at": parsed_body.get("started_at"),
+            "completed_at": parsed_body.get("completed_at"),
+            "answers": _normalized_answers_map(parsed_body),
+        },
+    }
+
+
+def _store_background_internal_review(parsed_body: dict[str, Any], storage_config: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
+    payload = _build_background_internal_review_payload(parsed_body)
+    if payload is None:
+        logger.info("Skipping background internal review persistence because Partition key is missing or invalid.")
+        return False, None
+
+    table_name = str(storage_config["table_name"])
+    _dynamodb_table(table_name).update_item(
+        Key={"pk": payload["pk"], "sk": payload["sk"]},
+        UpdateExpression="SET internal_review = :internal_review",
+        ExpressionAttributeValues={":internal_review": payload["internal_review"]},
+    )
+    logger.info(
+        "Stored YouForm internal review %s in DynamoDB table %s for original submission %s / %s.",
+        parsed_body.get("submission_id"),
+        table_name,
+        payload["pk"],
+        payload["sk"],
+    )
+    return True, payload
 
 
 def _volunteer_intent_from_email() -> str:
@@ -1207,6 +1255,8 @@ def _store_submission(parsed_body: dict[str, Any]) -> tuple[bool, dict[str, Any]
             parsed_body.get("form_id"),
         )
         return False, None
+    if str(storage_config.get("key_strategy") or "") == "background_internal_review":
+        return _store_background_internal_review(parsed_body, storage_config)
     table_name = str(storage_config["table_name"])
     item = _build_submission_item(parsed_body, storage_config)
     if item is None:
