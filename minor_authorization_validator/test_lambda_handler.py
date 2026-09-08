@@ -258,3 +258,68 @@ def test_handler_ignores_submission_from_other_form(monkeypatch):
     assert result["processed"][0]["authorization_found"] is False
     assert result["processed"][0]["matched_submission_id"] is None
     assert updated["ExpressionAttributeValues"][":status"] == "missing_form"
+
+
+def test_handler_records_invalid_record_body_without_retry(monkeypatch):
+    result = mod.handler(
+        {
+            "Records": [
+                {
+                    "body": "{bad-json",
+                    "messageId": "msg-1",
+                }
+            ]
+        },
+        None,
+    )
+
+    assert result["ok"] is True
+    assert result["processed"] == [
+        {
+            "stored": False,
+            "reason": "failed",
+            "event_id": None,
+            "attendee_id": None,
+            "error_type": "invalid_record_body",
+            "detail": "Record body is not valid JSON.",
+        }
+    ]
+
+
+def test_handler_records_missing_required_job_field_without_storing_unknown_job(monkeypatch):
+    class FakeJobsTable:
+        def get_item(self, Key):
+            raise AssertionError("get_item should not be called")
+
+        def put_item(self, Item):
+            raise AssertionError("put_item should not be called")
+
+        def update_item(self, **kwargs):
+            raise AssertionError("update_item should not be called")
+
+    monkeypatch.setenv("AUTHORIZATION_JOBS_TABLE_NAME", "test-jobs")
+    monkeypatch.setattr(mod, "_jobs_table", lambda: FakeJobsTable())
+
+    result = mod.handler(
+        {
+            "Records": [
+                {
+                    "body": '{"event_id": "1996475418721", "attendee_email": "minor@example.com"}',
+                    "messageId": "msg-2",
+                }
+            ]
+        },
+        None,
+    )
+
+    assert result["ok"] is True
+    assert result["processed"] == [
+        {
+            "stored": False,
+            "reason": "failed",
+            "event_id": "1996475418721",
+            "attendee_id": None,
+            "error_type": "missing_job_field",
+            "detail": "Missing required job field: attendee_id",
+        }
+    ]

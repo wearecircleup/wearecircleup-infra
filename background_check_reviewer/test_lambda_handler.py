@@ -585,17 +585,48 @@ def test_handler_records_invalid_record_body_as_failed(monkeypatch):
         ]
     }
 
-    try:
-        mod.handler(event, None)
-        raised = None
-    except Exception as exc:
-        raised = exc
+    response = mod.handler(event, None)
+    payload = json.loads(response["body"])
 
-    assert isinstance(raised, mod.ReviewProcessingError)
-    assert raised.error_type == "invalid_record_body"
+    assert response["statusCode"] == 200
+    assert payload["ok"] is True
+    assert payload["processed"][0]["status"] == "failed"
+    assert payload["processed"][0]["error_type"] == "invalid_record_body"
     assert stored[0]["status"] == "failed"
     assert stored[0]["review_error_type"] == "invalid_record_body"
     assert stored[0]["document_kind"] == "unknown"
+
+
+def test_handler_records_missing_job_field_as_failed_without_retry(monkeypatch):
+    stored: list[dict] = []
+
+    monkeypatch.setattr(mod, "_background_check_form_id", lambda: "dpaadbok")
+    monkeypatch.setattr(mod, "_source_submission", lambda job: {"contact_email": "persona@example.com"})
+    monkeypatch.setattr(mod, "_store_review", lambda item: stored.append(item))
+
+    event = {
+        "Records": [
+            {
+                "body": json.dumps(
+                    {
+                        "form_id": "dpaadbok",
+                        "submission_id": "sub-1",
+                        "document_kind": "cedula",
+                        "s3_bucket": "bucket",
+                    }
+                )
+            }
+        ]
+    }
+
+    response = mod.handler(event, None)
+    payload = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert payload["processed"][0]["status"] == "failed"
+    assert payload["processed"][0]["error_type"] == "missing_job_field"
+    assert stored[0]["status"] == "failed"
+    assert stored[0]["review_error_type"] == "missing_job_field"
 
 
 def test_handler_preserves_original_error_when_failure_persistence_also_fails(monkeypatch):

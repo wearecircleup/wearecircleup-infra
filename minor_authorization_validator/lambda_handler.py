@@ -14,6 +14,14 @@ logger.setLevel(logging.INFO)
 _SECRET_CACHE: dict[str, dict[str, str]] = {}
 
 
+class ProcessingError(RuntimeError):
+    def __init__(self, error_type: str, detail: str, retryable: bool = True):
+        super().__init__(detail)
+        self.error_type = error_type
+        self.detail = detail
+        self.retryable = retryable
+
+
 def _jobs_table():
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     table_name = os.getenv("AUTHORIZATION_JOBS_TABLE_NAME")
@@ -64,11 +72,46 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _log_json(message: str, payload: dict[str, Any]) -> None:
+    logger.info("%s: %s", message, json.dumps(payload, ensure_ascii=False, default=str))
+
+
 def _normalized_email(attendee_email: Any, buyer_email: Any) -> str | None:
     for value in (attendee_email, buyer_email):
         if isinstance(value, str) and value.strip():
             return value.strip().lower()
     return None
+
+
+def _required_job_value(job: dict[str, Any], field_name: str) -> str:
+    value = job.get(field_name)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise ProcessingError("missing_job_field", f"Missing required job field: {field_name}", retryable=False)
+
+
+def _record_summary(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "message_id": record.get("messageId"),
+        "body_present": isinstance(record.get("body"), str),
+    }
+
+
+def _parse_record_job(record: dict[str, Any]) -> dict[str, Any]:
+    body = record.get("body") or "{}"
+    try:
+        job = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise ProcessingError("invalid_record_body", "Record body is not valid JSON.", retryable=False) from exc
+    if not isinstance(job, dict):
+        raise ProcessingError("invalid_record_body", "Record body must decode to a JSON object.", retryable=False)
+    return job
+
+
+def _validate_job(job: dict[str, Any]) -> dict[str, Any]:
+    _required_job_value(job, "event_id")
+    _required_job_value(job, "attendee_id")
+    return job
 
 
 def _job_keys(job: dict[str, Any]) -> tuple[str, str]:
@@ -153,22 +196,41 @@ def _find_matching_youform_submission(job: dict[str, Any]) -> dict[str, Any] | N
     return None
 
 
+def _validation_outcome(
+    job: dict[str, Any],
+    matched_submission: dict[str, Any] | None,
+    processed_at: str,
+) -> dict[str, Any]:
+    status = "authorized" if matched_submission else "missing_form"
+    validation_result = "form_found" if matched_submission else "form_missing"
+    return {
+        "status": status,
+        "validation_result": validation_result,
+        "authorization_found": bool(matched_submission),
+        "matched_submission_id": matched_submission.get("submission_id") if matched_submission else None,
+        "processed_at": processed_at,
+        "gsi1pk": f"STATUS#{status}",
+        "gsi1sk": (
+            f"COMPLETED_AT#{processed_at}#EVENT#{job.get('event_id') or 'UNKNOWN_EVENT'}"
+            f"#ATTENDEE#{job.get('attendee_id') or 'UNKNOWN_ATTENDEE'}"
+        ),
+    }
+
+
 def _update_job_validation_result(table, pk: str, sk: str, job: dict[str, Any]) -> dict[str, Any]:
     matched_submission = _find_matching_youform_submission(job)
     processed_at = _utc_now()
-    status = "authorized" if matched_submission else "missing_form"
-    validation_result = "form_found" if matched_submission else "form_missing"
-    authorization_found = bool(matched_submission)
+    outcome = _validation_outcome(job, matched_submission, processed_at)
     update_values = {
-        ":status": status,
-        ":validation_result": validation_result,
-        ":authorization_found": authorization_found,
-        ":matched_submission_id": matched_submission.get("submission_id") if matched_submission else None,
-        ":completed_at": processed_at,
-        ":last_attempt_at": processed_at,
+        ":status": outcome["status"],
+        ":validation_result": outcome["validation_result"],
+        ":authorization_found": outcome["authorization_found"],
+        ":matched_submission_id": outcome["matched_submission_id"],
+        ":completed_at": outcome["processed_at"],
+        ":last_attempt_at": outcome["processed_at"],
         ":attempt_count": 1,
-        ":gsi1pk": f"STATUS#{status}",
-        ":gsi1sk": f"COMPLETED_AT#{processed_at}#EVENT#{job.get('event_id') or 'UNKNOWN_EVENT'}#ATTENDEE#{job.get('attendee_id') or 'UNKNOWN_ATTENDEE'}",
+        ":gsi1pk": outcome["gsi1pk"],
+        ":gsi1sk": outcome["gsi1sk"],
     }
     table.update_item(
         Key={"pk": pk, "sk": sk},
@@ -192,19 +254,19 @@ def _update_job_validation_result(table, pk: str, sk: str, job: dict[str, Any]) 
             {
                 "pk": pk,
                 "sk": sk,
-                "status": status,
-                "validation_result": validation_result,
-                "matched_submission_id": matched_submission.get("submission_id") if matched_submission else None,
+                "status": outcome["status"],
+                "validation_result": outcome["validation_result"],
+                "matched_submission_id": outcome["matched_submission_id"],
             },
             ensure_ascii=False,
             default=str,
         ),
     )
     return {
-        "status": status,
-        "validation_result": validation_result,
-        "authorization_found": authorization_found,
-        "matched_submission_id": matched_submission.get("submission_id") if matched_submission else None,
+        "status": outcome["status"],
+        "validation_result": outcome["validation_result"],
+        "authorization_found": outcome["authorization_found"],
+        "matched_submission_id": outcome["matched_submission_id"],
     }
 
 
@@ -212,10 +274,14 @@ def _store_job(job: dict[str, Any]) -> dict[str, Any]:
     table = _jobs_table()
     pk, sk = _job_keys(job)
     if _job_exists(table, pk, sk):
-        logger.info(
-            "Minor authorization job already exists for %s / %s. Skipping duplicate message.",
-            pk,
-            sk,
+        _log_json(
+            "Minor authorization job already exists",
+            {
+                "pk": pk,
+                "sk": sk,
+                "event_id": job.get("event_id"),
+                "attendee_id": job.get("attendee_id"),
+            },
         )
         return {
             "stored": False,
@@ -225,7 +291,16 @@ def _store_job(job: dict[str, Any]) -> dict[str, Any]:
         }
     item = _build_job_item(job)
     table.put_item(Item=item)
-    logger.info("Stored minor authorization job: %s", json.dumps(item, ensure_ascii=False, default=str))
+    _log_json(
+        "Stored minor authorization job",
+        {
+            "pk": item.get("pk"),
+            "sk": item.get("sk"),
+            "event_id": item.get("event_id"),
+            "attendee_id": item.get("attendee_id"),
+            "has_email_index": bool(item.get("gsi2pk")),
+        },
+    )
     stored_result = {
         "stored": True,
         "pk": item["pk"],
@@ -236,28 +311,82 @@ def _store_job(job: dict[str, Any]) -> dict[str, Any]:
     return stored_result
 
 
+def _failed_job_result(job: dict[str, Any], exc: Exception) -> dict[str, Any]:
+    error_type = exc.error_type if isinstance(exc, ProcessingError) else type(exc).__name__
+    detail = exc.detail if isinstance(exc, ProcessingError) else str(exc)
+    return {
+        "stored": False,
+        "reason": "failed",
+        "event_id": job.get("event_id"),
+        "attendee_id": job.get("attendee_id"),
+        "error_type": error_type,
+        "detail": detail,
+    }
+
+
+def _log_processing_failure(job: dict[str, Any], record: dict[str, Any], exc: Exception) -> None:
+    error_type = exc.error_type if isinstance(exc, ProcessingError) else type(exc).__name__
+    detail = exc.detail if isinstance(exc, ProcessingError) else str(exc)
+    _log_json(
+        "Minor authorization validation failed",
+        {
+            "record": _record_summary(record),
+            "job": {
+                "event_id": job.get("event_id"),
+                "attendee_id": job.get("attendee_id"),
+                "attendee_email": job.get("attendee_email"),
+                "buyer_email": job.get("buyer_email"),
+            },
+            "error_type": error_type,
+            "detail": detail,
+        },
+    )
+
+
+def _batch_summary(records: list[Any], processed: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "record_count": len(records),
+        "jobs_table": os.getenv("AUTHORIZATION_JOBS_TABLE_NAME"),
+        "youform_table": os.getenv("YOUFORM_SUBMISSIONS_TABLE_NAME"),
+        "eventbrite_table": os.getenv("EVENTBRITE_ORDER_SUBMISSIONS_TABLE_NAME"),
+        "processed_count": len(processed),
+        "status_counts": {
+            status: sum(1 for item in processed if item.get("status") == status)
+            for status in sorted({str(item.get("status")) for item in processed if item.get("status") is not None})
+        },
+        "error_types": sorted(
+            {
+                str(item.get("error_type"))
+                for item in processed
+                if item.get("error_type") is not None
+            }
+        ),
+    }
+
+
 def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     records = event.get("Records") or []
     processed: list[dict[str, Any]] = []
     for record in records:
-        body = record.get("body") or "{}"
-        job = json.loads(body)
-        processed.append(_store_job(job))
+        record_dict = record if isinstance(record, dict) else {}
+        job = {
+            "event_id": None,
+            "attendee_id": None,
+            "attendee_email": None,
+            "buyer_email": None,
+        }
+        try:
+            job = _parse_record_job(record_dict)
+            _validate_job(job)
+            processed.append(_store_job(job))
+        except Exception as exc:
+            _log_processing_failure(job, record_dict, exc)
+            if isinstance(exc, ProcessingError) and not exc.retryable:
+                processed.append(_failed_job_result(job, exc))
+                continue
+            raise
 
-    logger.info(
-        "Received minor authorization validation batch: %s",
-        json.dumps(
-            {
-                "record_count": len(records),
-                "jobs_table": os.getenv("AUTHORIZATION_JOBS_TABLE_NAME"),
-                "youform_table": os.getenv("YOUFORM_SUBMISSIONS_TABLE_NAME"),
-                "eventbrite_table": os.getenv("EVENTBRITE_ORDER_SUBMISSIONS_TABLE_NAME"),
-                "processed": processed,
-            },
-            ensure_ascii=False,
-            default=str,
-        ),
-    )
+    _log_json("Received minor authorization validation batch", _batch_summary(records, processed))
     return {
         "ok": True,
         "record_count": len(records),

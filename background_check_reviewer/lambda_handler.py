@@ -21,10 +21,11 @@ SUPPORTED_DOCUMENT_KINDS = {"cedula", "antecedentes_judiciales", "antecedentes_i
 
 
 class ReviewProcessingError(RuntimeError):
-    def __init__(self, error_type: str, detail: str):
+    def __init__(self, error_type: str, detail: str, retryable: bool = True):
         super().__init__(detail)
         self.error_type = error_type
         self.detail = detail
+        self.retryable = retryable
 
 EXTRACTION_PROMPT = """Eres un extractor de datos de documentos de identidad colombianos (cedula de
 ciudadania formato pre-2020, cedula 2020+ con MRZ, cedula de extranjeria).
@@ -1213,11 +1214,23 @@ def _ignored_review_result(job: dict[str, Any], reason: str) -> dict[str, Any]:
     }
 
 
+def _failed_review_result(job: dict[str, Any], exc: Exception) -> dict[str, Any]:
+    error_type = exc.error_type if isinstance(exc, ReviewProcessingError) else type(exc).__name__
+    error_detail = exc.detail if isinstance(exc, ReviewProcessingError) else str(exc)
+    return {
+        "submission_id": job.get("submission_id"),
+        "status": "failed",
+        "document_kind": job.get("document_kind") or "unknown",
+        "error_type": error_type,
+        "detail": error_detail,
+    }
+
+
 def _required_job_value(job: dict[str, Any], field_name: str) -> str:
     value = job.get(field_name)
     if isinstance(value, str) and value.strip():
         return value.strip()
-    raise ReviewProcessingError("missing_job_field", f"Missing required job field: {field_name}")
+    raise ReviewProcessingError("missing_job_field", f"Missing required job field: {field_name}", retryable=False)
 
 
 def _parse_record_job(record: dict[str, Any]) -> dict[str, Any]:
@@ -1225,9 +1238,9 @@ def _parse_record_job(record: dict[str, Any]) -> dict[str, Any]:
     try:
         job = json.loads(body)
     except json.JSONDecodeError as exc:
-        raise ReviewProcessingError("invalid_record_body", "Record body is not valid JSON.") from exc
+        raise ReviewProcessingError("invalid_record_body", "Record body is not valid JSON.", retryable=False) from exc
     if not isinstance(job, dict):
-        raise ReviewProcessingError("invalid_record_body", "Record body must decode to a JSON object.")
+        raise ReviewProcessingError("invalid_record_body", "Record body must decode to a JSON object.", retryable=False)
     return job
 
 
@@ -1411,6 +1424,32 @@ def _store_failed_review(job: dict[str, Any], exc: Exception) -> None:
         )
 
 
+def _batch_summary(processed: list[dict[str, Any]], records: list[Any]) -> dict[str, Any]:
+    return {
+        "record_count": len(records),
+        "reviews_table": os.getenv("BACKGROUND_CHECK_REVIEWS_TABLE_NAME"),
+        "processed_count": len(processed),
+        "status_counts": {
+            status: sum(1 for item in processed if item.get("status") == status)
+            for status in sorted({str(item.get("status")) for item in processed if item.get("status") is not None})
+        },
+        "document_kinds": sorted(
+            {
+                str(item.get("document_kind"))
+                for item in processed
+                if item.get("document_kind") is not None
+            }
+        ),
+        "error_types": sorted(
+            {
+                str(item.get("error_type"))
+                for item in processed
+                if item.get("error_type") is not None
+            }
+        ),
+    }
+
+
 def _process_job(job: dict[str, Any]) -> dict[str, Any]:
     if str(job.get("form_id") or "").strip() != _background_check_form_id():
         return _ignored_review_result(job, "form_id_mismatch")
@@ -1448,29 +1487,14 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "Failed background check review for submission %s.",
                 job.get("submission_id"),
             )
+            if isinstance(exc, ReviewProcessingError) and not exc.retryable:
+                processed.append(_failed_review_result(job, exc))
+                continue
             raise
 
     _log_json(
         "Processed background check review batch",
-        {
-            "record_count": len(records),
-            "reviews_table": os.getenv("BACKGROUND_CHECK_REVIEWS_TABLE_NAME"),
-            "processed_count": len(processed),
-            "statuses": sorted(
-                {
-                    str(item.get("status"))
-                    for item in processed
-                    if item.get("status") is not None
-                }
-            ),
-            "document_kinds": sorted(
-                {
-                    str(item.get("document_kind"))
-                    for item in processed
-                    if item.get("document_kind") is not None
-                }
-            ),
-        },
+        _batch_summary(processed, records),
     )
     return {
         "statusCode": 200,

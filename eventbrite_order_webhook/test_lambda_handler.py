@@ -377,3 +377,43 @@ def test_handler_returns_queue_error_when_enqueue_fails(monkeypatch):
 
     assert response["statusCode"] == 500
     assert response["body"] == '{"ok": false, "error_type": "queue_error", "detail": "queue failed"}'
+
+
+def test_store_order_submission_requires_submission_table(monkeypatch):
+    monkeypatch.delenv("SUBMISSIONS_TABLE_NAME", raising=False)
+
+    try:
+        mod._store_order_submission(
+            {"api_url": "https://www.eventbriteapi.com/v3/orders/15413130193/"},
+            None,
+        )
+    except mod.ProcessingError as exc:
+        assert exc.error_type == "persistence_error"
+        assert exc.detail == "SUBMISSIONS_TABLE_NAME is not configured."
+    else:
+        raise AssertionError("Expected ProcessingError")
+
+
+def test_fetch_order_bundle_rejects_mismatched_order_id(monkeypatch):
+    api_url = "https://www.eventbriteapi.com/v3/orders/15413130193/"
+
+    def fake_request_json(url: str, token: str):
+        assert token == "token-123"
+        if url == api_url:
+            return {"id": "another-order", "event_id": "1996456922398"}
+        if url == "https://www.eventbriteapi.com/v3/events/1996456922398/":
+            return {}
+        if url == "https://www.eventbriteapi.com/v3/orders/15413130193/attendees/?page=1":
+            return {"attendees": [], "pagination": {"has_more_items": False}}
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setenv("EVENTBRITE_PRIVATE_TOKEN", "token-123")
+    monkeypatch.setattr(mod, "_request_json", fake_request_json)
+
+    try:
+        mod._fetch_order_bundle(api_url)
+    except mod.ProcessingError as exc:
+        assert exc.error_type == "eventbrite_error"
+        assert exc.detail == "Eventbrite order payload returned an unexpected order id."
+    else:
+        raise AssertionError("Expected ProcessingError")

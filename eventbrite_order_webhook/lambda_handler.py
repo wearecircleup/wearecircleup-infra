@@ -97,6 +97,14 @@ def _request_context_summary(request_context: dict[str, Any] | None) -> dict[str
     }
 
 
+def _webhook_summary(webhook_payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "api_url": webhook_payload.get("api_url"),
+        "action": (webhook_payload.get("config") or {}).get("action"),
+        "webhook_id": (webhook_payload.get("config") or {}).get("webhook_id"),
+    }
+
+
 def _request_json(url: str, token: str) -> dict[str, Any]:
     request = Request(
         url,
@@ -194,6 +202,31 @@ def _fetch_venue(venue_id: str, token: str) -> dict[str, Any]:
     return _request_json(f"{base_url}/venues/{venue_id}/", token)
 
 
+def _validate_order_bundle(order_id: str, order_bundle: dict[str, Any]) -> dict[str, Any]:
+    order = order_bundle.get("order")
+    attendees = order_bundle.get("attendees")
+    event_details = order_bundle.get("event_details")
+    venue_details = order_bundle.get("venue_details")
+
+    if not isinstance(order, dict):
+        raise ProcessingError("eventbrite_error", "Eventbrite order payload is missing the order object.")
+    if str(order.get("id") or "") != order_id:
+        raise ProcessingError("eventbrite_error", "Eventbrite order payload returned an unexpected order id.")
+    if not isinstance(attendees, list):
+        raise ProcessingError("eventbrite_error", "Eventbrite attendees payload is invalid.")
+    if not isinstance(event_details, dict):
+        raise ProcessingError("eventbrite_error", "Eventbrite event payload is invalid.")
+    if not isinstance(venue_details, dict):
+        raise ProcessingError("eventbrite_error", "Eventbrite venue payload is invalid.")
+
+    return {
+        "order": order,
+        "attendees": attendees,
+        "event_details": event_details,
+        "venue_details": venue_details,
+    }
+
+
 def _parse_webhook(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
     body = event.get("body") or ""
     if event.get("isBase64Encoded"):
@@ -208,6 +241,23 @@ def _parse_webhook(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any
         raise ProcessingError("invalid_payload", "Webhook body must be a JSON object.", status_code=400)
 
     return webhook_payload, event.get("requestContext")
+
+
+def _submission_table_name() -> str:
+    table_name = (os.getenv("SUBMISSIONS_TABLE_NAME") or "").strip()
+    if table_name:
+        return table_name
+    raise ProcessingError("persistence_error", "SUBMISSIONS_TABLE_NAME is not configured.")
+
+
+def _resolve_order_api_url(webhook_payload: dict[str, Any]) -> str | None:
+    api_url = webhook_payload.get("api_url")
+    if not isinstance(api_url, str) or not api_url.strip():
+        return None
+    normalized = api_url.strip()
+    if not _extract_order_id(normalized):
+        return None
+    return normalized
 
 
 def _event_datetime_parts(event: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -424,13 +474,16 @@ def _fetch_order_bundle(api_url: str) -> dict[str, Any]:
             "minor_candidate_count": sum(1 for attendee in attendees if _is_minor_attendee(attendee)[0]),
         },
     )
-    return {
+    return _validate_order_bundle(
+        order_id,
+        {
         "order_id": order_id,
         "order": order,
         "event_details": event_details,
         "venue_details": venue_details,
         "attendees": attendees,
-    }
+        },
+    ) | {"order_id": order_id}
 
 
 def _store_submission(item: dict[str, Any], table_name: str) -> None:
@@ -454,6 +507,17 @@ def _submission_result(
     }
 
 
+def _result_log_summary(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "stored": result.get("stored"),
+        "reason": result.get("reason"),
+        "order_id": result.get("order_id"),
+        "attendee_count": result.get("attendee_count"),
+        "webhook_action": result.get("webhook_action"),
+        "minor_authorization_jobs_enqueued": result.get("minor_authorization_jobs_enqueued"),
+    }
+
+
 def _log_stored_submission(
     webhook_payload: dict[str, Any],
     request_context: dict[str, Any] | None,
@@ -464,10 +528,7 @@ def _log_stored_submission(
         "Stored Eventbrite submission",
         {
             "request_context": _request_context_summary(request_context),
-            "webhook": {
-                "action": (webhook_payload.get("config") or {}).get("action"),
-                "webhook_id": (webhook_payload.get("config") or {}).get("webhook_id"),
-            },
+            "webhook": _webhook_summary(webhook_payload),
             "submission": {
                 "pk": item.get("pk"),
                 "sk": item.get("sk"),
@@ -480,20 +541,34 @@ def _log_stored_submission(
     )
 
 
+def _log_processing_failure(
+    webhook_payload: dict[str, Any] | None,
+    request_context: dict[str, Any] | None,
+    error_type: str,
+    detail: str,
+) -> None:
+    _log_json(
+        "Eventbrite webhook processing failed",
+        {
+            "request_context": _request_context_summary(request_context),
+            "webhook": _webhook_summary(webhook_payload or {}),
+            "error_type": error_type,
+            "detail": detail,
+        },
+    )
+
+
 def _store_order_submission(webhook_payload: dict[str, Any], request_context: dict[str, Any] | None) -> dict[str, Any]:
-    api_url = webhook_payload.get("api_url")
-    if not api_url:
+    api_url = _resolve_order_api_url(webhook_payload)
+    if api_url is None and not webhook_payload.get("api_url"):
         logger.info("Skipping Eventbrite webhook persistence because api_url is missing.")
         return {"stored": False, "reason": "missing_api_url"}
-    if not _extract_order_id(str(api_url)):
-        logger.info("Skipping Eventbrite webhook persistence because api_url is unsupported: %s", api_url)
+    if api_url is None:
+        logger.info("Skipping Eventbrite webhook persistence because api_url is unsupported: %s", webhook_payload.get("api_url"))
         return {"stored": False, "reason": "unsupported_api_url"}
 
-    table_name = os.getenv("SUBMISSIONS_TABLE_NAME")
-    if not table_name:
-        raise ProcessingError("persistence_error", "SUBMISSIONS_TABLE_NAME is not configured.")
-
-    order_bundle = _fetch_order_bundle(str(api_url))
+    table_name = _submission_table_name()
+    order_bundle = _fetch_order_bundle(api_url)
     item = _build_submission(webhook_payload, order_bundle, request_context)
     _store_submission(item, table_name)
     enqueued_jobs = _enqueue_minor_jobs(item, request_context)
@@ -502,26 +577,26 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
 
 
 def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
+    webhook_payload: dict[str, Any] | None = None
+    request_context: dict[str, Any] | None = event.get("requestContext")
     try:
         webhook_payload, request_context = _parse_webhook(event)
         result = _store_order_submission(webhook_payload, request_context)
     except ProcessingError as exc:
         logger.exception("Failed to process Eventbrite order webhook (%s).", exc.error_type)
+        _log_processing_failure(webhook_payload, request_context, exc.error_type, exc.detail)
         return _json_response(exc.status_code, {"ok": False, "error_type": exc.error_type, "detail": exc.detail})
     except Exception as exc:
         logger.exception("Failed to process Eventbrite order webhook.")
+        _log_processing_failure(webhook_payload, request_context, "unexpected_error", str(exc))
         return _json_response(500, {"ok": False, "error_type": "unexpected_error", "detail": str(exc)})
 
     _log_json(
         "Received Eventbrite webhook",
         {
             "request_context": _request_context_summary(request_context),
-            "webhook": {
-                "api_url": webhook_payload.get("api_url"),
-                "action": (webhook_payload.get("config") or {}).get("action"),
-                "webhook_id": (webhook_payload.get("config") or {}).get("webhook_id"),
-            },
-            "result": result,
+            "webhook": _webhook_summary(webhook_payload),
+            "result": _result_log_summary(result),
         },
     )
 
