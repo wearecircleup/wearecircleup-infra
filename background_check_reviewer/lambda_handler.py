@@ -19,6 +19,13 @@ logger.setLevel(logging.INFO)
 _SECRET_CACHE: dict[str, dict[str, str]] = {}
 SUPPORTED_DOCUMENT_KINDS = {"cedula", "antecedentes_judiciales", "antecedentes_inhabilidades"}
 
+
+class ReviewProcessingError(RuntimeError):
+    def __init__(self, error_type: str, detail: str):
+        super().__init__(detail)
+        self.error_type = error_type
+        self.detail = detail
+
 EXTRACTION_PROMPT = """Eres un extractor de datos de documentos de identidad colombianos (cedula de
 ciudadania formato pre-2020, cedula 2020+ con MRZ, cedula de extranjeria).
 
@@ -1206,30 +1213,57 @@ def _ignored_review_result(job: dict[str, Any], reason: str) -> dict[str, Any]:
     }
 
 
-def _review_payload_for_job(document_kind: str, pdf_bytes: bytes) -> dict[str, Any]:
-    # Bedrock is reserved strictly for identity-document extraction.
-    # Certificates follow a separate Textract path to keep responsibilities split.
-    if document_kind == "cedula":
-        max_pages = int(os.getenv("BACKGROUND_CHECK_REVIEW_MAX_PAGES", "2"))
-        images = _render_pdf_pages(pdf_bytes, max_pages=max_pages)
-        if not images:
-            raise RuntimeError("No rendered images were produced from the PDF.")
-        extraction = _extract_document_with_bedrock(images)
-        cedula_snapshot = _cedula_identity_snapshot({"review_payload": extraction.get("tool_input")})
-        cedula_document_validation = _cedula_document_validation(extraction.get("tool_input"), len(images))
-        return {
-            "review_engine": "bedrock",
-            "review_payload": extraction.get("tool_input"),
-            "review_usage": extraction.get("usage"),
-            "review_stop_reason": extraction.get("stop_reason"),
-            "page_count_processed": len(images),
-            "identity_document_number": cedula_snapshot.get("document_number"),
-            "identity_last_names": cedula_snapshot.get("last_names"),
-            "identity_first_names": cedula_snapshot.get("first_names"),
-            "identity_full_name": cedula_snapshot.get("full_name"),
-            **cedula_document_validation,
-        }
+def _required_job_value(job: dict[str, Any], field_name: str) -> str:
+    value = job.get(field_name)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise ReviewProcessingError("missing_job_field", f"Missing required job field: {field_name}")
 
+
+def _parse_record_job(record: dict[str, Any]) -> dict[str, Any]:
+    body = record.get("body") or "{}"
+    try:
+        job = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise ReviewProcessingError("invalid_record_body", "Record body is not valid JSON.") from exc
+    if not isinstance(job, dict):
+        raise ReviewProcessingError("invalid_record_body", "Record body must decode to a JSON object.")
+    return job
+
+
+def _fallback_job_for_record(record: dict[str, Any]) -> dict[str, Any]:
+    body = record.get("body")
+    return {
+        "submission_id": None,
+        "form_id": None,
+        "document_kind": "unknown",
+        "raw_record_body": body if isinstance(body, str) else None,
+    }
+
+
+def _cedula_review_payload(pdf_bytes: bytes) -> dict[str, Any]:
+    max_pages = int(os.getenv("BACKGROUND_CHECK_REVIEW_MAX_PAGES", "2"))
+    images = _render_pdf_pages(pdf_bytes, max_pages=max_pages)
+    if not images:
+        raise ReviewProcessingError("pdf_render_error", "No rendered images were produced from the PDF.")
+    extraction = _extract_document_with_bedrock(images)
+    cedula_snapshot = _cedula_identity_snapshot({"review_payload": extraction.get("tool_input")})
+    cedula_document_validation = _cedula_document_validation(extraction.get("tool_input"), len(images))
+    return {
+        "review_engine": "bedrock",
+        "review_payload": extraction.get("tool_input"),
+        "review_usage": extraction.get("usage"),
+        "review_stop_reason": extraction.get("stop_reason"),
+        "page_count_processed": len(images),
+        "identity_document_number": cedula_snapshot.get("document_number"),
+        "identity_last_names": cedula_snapshot.get("last_names"),
+        "identity_first_names": cedula_snapshot.get("first_names"),
+        "identity_full_name": cedula_snapshot.get("full_name"),
+        **cedula_document_validation,
+    }
+
+
+def _certificate_review_payload(pdf_bytes: bytes) -> dict[str, Any]:
     extraction = _extract_text_with_textract(pdf_bytes)
     return {
         "review_engine": "textract_detect_document_text",
@@ -1237,6 +1271,14 @@ def _review_payload_for_job(document_kind: str, pdf_bytes: bytes) -> dict[str, A
         "review_text": extraction.get("text"),
         "page_count_processed": extraction.get("page_count_detected"),
     }
+
+
+def _review_payload_for_job(document_kind: str, pdf_bytes: bytes) -> dict[str, Any]:
+    # Bedrock is reserved strictly for identity-document extraction.
+    # Certificates follow a separate Textract path to keep responsibilities split.
+    if document_kind == "cedula":
+        return _cedula_review_payload(pdf_bytes)
+    return _certificate_review_payload(pdf_bytes)
 
 
 def _validated_review_item(
@@ -1254,6 +1296,17 @@ def _validated_review_item(
         review_item,
         _certificate_validation_result(document_kind, review_item.get("review_text"), cedula_review),
     )
+
+
+def _load_job_dependencies(job: dict[str, Any]) -> tuple[dict[str, Any] | None, bytes]:
+    submission = _source_submission(job)
+    bucket_name = _required_job_value(job, "s3_bucket")
+    key = _required_job_value(job, "s3_key")
+    try:
+        pdf_bytes = _download_pdf(bucket_name, key)
+    except Exception as exc:
+        raise ReviewProcessingError("pdf_download_error", f"Failed to download review PDF: {exc}") from exc
+    return submission, pdf_bytes
 
 
 def _postprocess_completed_review(job: dict[str, Any], review_item: dict[str, Any]) -> dict[str, Any]:
@@ -1329,16 +1382,33 @@ def _postprocess_completed_review(job: dict[str, Any], review_item: dict[str, An
 
 
 def _store_failed_review(job: dict[str, Any], exc: Exception) -> None:
+    try:
+        submission = _source_submission(job)
+    except Exception:
+        logger.exception(
+            "Failed to load source submission while recording review failure for submission %s.",
+            job.get("submission_id"),
+        )
+        submission = None
+
+    error_type = exc.error_type if isinstance(exc, ReviewProcessingError) else type(exc).__name__
+    error_detail = exc.detail if isinstance(exc, ReviewProcessingError) else str(exc)
     failure_item = _review_item(
         job,
-        _source_submission(job),
+        submission,
         {
-            "review_error": str(exc),
-            "review_error_type": type(exc).__name__,
+            "review_error": error_detail,
+            "review_error_type": error_type,
         },
         "failed",
     )
-    _store_review(failure_item)
+    try:
+        _store_review(failure_item)
+    except Exception:
+        logger.exception(
+            "Failed to persist review failure for submission %s.",
+            job.get("submission_id"),
+        )
 
 
 def _process_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -1348,11 +1418,18 @@ def _process_job(job: dict[str, Any]) -> dict[str, Any]:
     if document_kind not in SUPPORTED_DOCUMENT_KINDS:
         return _ignored_review_result(job, "unsupported_document_kind")
 
-    submission = _source_submission(job)
-    pdf_bytes = _download_pdf(str(job["s3_bucket"]), str(job["s3_key"]))
-    review_payload = _review_payload_for_job(document_kind, pdf_bytes)
+    submission, pdf_bytes = _load_job_dependencies(job)
+    try:
+        review_payload = _review_payload_for_job(document_kind, pdf_bytes)
+    except ReviewProcessingError:
+        raise
+    except Exception as exc:
+        raise ReviewProcessingError("review_extraction_error", f"Failed to extract review data: {exc}") from exc
     review_item = _validated_review_item(job, submission, document_kind, review_payload)
-    _store_review(review_item)
+    try:
+        _store_review(review_item)
+    except Exception as exc:
+        raise ReviewProcessingError("review_persistence_error", f"Failed to store review item: {exc}") from exc
     return _postprocess_completed_review(job, review_item)
 
 
@@ -1360,9 +1437,10 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     records = event.get("Records") or []
     processed: list[dict[str, Any]] = []
     for record in records:
-        body = record.get("body") or "{}"
-        job = json.loads(body)
+        record_dict = record if isinstance(record, dict) else {}
+        job = _fallback_job_for_record(record_dict)
         try:
+            job = _parse_record_job(record_dict)
             processed.append(_process_job(job))
         except Exception as exc:
             _store_failed_review(job, exc)

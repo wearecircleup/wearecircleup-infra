@@ -546,3 +546,82 @@ def test_handler_records_failure_and_raises(monkeypatch):
 
     assert raised is True
     assert stored[0]["status"] == "failed"
+    assert stored[0]["review_error_type"] == "RuntimeError"
+
+
+def test_process_job_fails_with_missing_job_field(monkeypatch):
+    monkeypatch.setattr(mod, "_background_check_form_id", lambda: "dpaadbok")
+    monkeypatch.setattr(mod, "_source_submission", lambda job: {"contact_email": "persona@example.com"})
+
+    try:
+        mod._process_job(
+            {
+                "form_id": "dpaadbok",
+                "submission_id": "sub-1",
+                "document_kind": "cedula",
+                "s3_bucket": "bucket",
+            }
+        )
+        raised = None
+    except Exception as exc:
+        raised = exc
+
+    assert isinstance(raised, mod.ReviewProcessingError)
+    assert raised.error_type == "missing_job_field"
+    assert "s3_key" in raised.detail
+
+
+def test_handler_records_invalid_record_body_as_failed(monkeypatch):
+    stored: list[dict] = []
+
+    monkeypatch.setattr(mod, "_source_submission", lambda job: None)
+    monkeypatch.setattr(mod, "_store_review", lambda item: stored.append(item))
+
+    event = {
+        "Records": [
+            {
+                "body": "{bad-json",
+            }
+        ]
+    }
+
+    try:
+        mod.handler(event, None)
+        raised = None
+    except Exception as exc:
+        raised = exc
+
+    assert isinstance(raised, mod.ReviewProcessingError)
+    assert raised.error_type == "invalid_record_body"
+    assert stored[0]["status"] == "failed"
+    assert stored[0]["review_error_type"] == "invalid_record_body"
+    assert stored[0]["document_kind"] == "unknown"
+
+
+def test_handler_preserves_original_error_when_failure_persistence_also_fails(monkeypatch):
+    monkeypatch.setattr(mod, "_process_job", lambda job: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(mod, "_source_submission", lambda job: None)
+    monkeypatch.setattr(mod, "_store_review", lambda item: (_ for _ in ()).throw(RuntimeError("cannot persist failure")))
+
+    event = {
+        "Records": [
+            {
+                "body": json.dumps(
+                    {
+                        "form_id": "dpaadbok",
+                        "submission_id": "sub-1",
+                        "document_kind": "cedula",
+                    }
+                )
+            }
+        ]
+    }
+
+    try:
+        mod.handler(event, None)
+        raised = None
+    except Exception as exc:
+        raised = exc
+
+    assert isinstance(raised, RuntimeError)
+    assert str(raised) == "boom"
