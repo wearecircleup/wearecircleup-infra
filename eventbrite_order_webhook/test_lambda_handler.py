@@ -318,3 +318,62 @@ def test_store_order_submission_does_not_enqueue_when_no_minor_is_detected(monke
 
     assert result["minor_authorization_jobs_enqueued"] == 0
     assert sent_messages == []
+
+
+def test_handler_returns_invalid_payload_error_for_bad_json():
+    response = mod.handler({"body": "{not-json"}, None)
+
+    assert response["statusCode"] == 400
+    assert response["headers"]["Content-Type"] == "application/json"
+    assert response["body"] == '{"ok": false, "error_type": "invalid_payload", "detail": "Invalid JSON body."}'
+
+
+def test_handler_returns_eventbrite_error_when_bundle_fetch_fails(monkeypatch):
+    monkeypatch.setattr(
+        mod,
+        "_fetch_order_bundle",
+        lambda api_url: (_ for _ in ()).throw(mod.ProcessingError("eventbrite_error", "upstream failed")),
+    )
+    monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
+
+    response = mod.handler({"body": '{"api_url": "https://www.eventbriteapi.com/v3/orders/15413130193/"}'}, None)
+
+    assert response["statusCode"] == 500
+    assert response["body"] == '{"ok": false, "error_type": "eventbrite_error", "detail": "upstream failed"}'
+
+
+def test_handler_returns_queue_error_when_enqueue_fails(monkeypatch):
+    monkeypatch.setenv("SUBMISSIONS_TABLE_NAME", "test-table")
+    monkeypatch.setattr(
+        mod,
+        "_fetch_order_bundle",
+        lambda api_url: {
+            "order_id": "15413130193",
+            "order": {"id": "15413130193", "event_id": "1996456922398"},
+            "event_details": {},
+            "venue_details": {},
+            "attendees": [],
+        },
+    )
+    monkeypatch.setattr(
+        mod,
+        "_build_submission",
+        lambda webhook_payload, order_bundle, request_context: {
+            "pk": "ORDER#15413130193",
+            "sk": "ORDER#15413130193",
+            "order_id": "15413130193",
+            "event_id": "1996456922398",
+            "attendee_count": 0,
+        },
+    )
+    monkeypatch.setattr(mod, "_store_submission", lambda item, table_name: None)
+    monkeypatch.setattr(
+        mod,
+        "_enqueue_minor_jobs",
+        lambda item, request_context: (_ for _ in ()).throw(mod.ProcessingError("queue_error", "queue failed")),
+    )
+
+    response = mod.handler({"body": '{"api_url": "https://www.eventbriteapi.com/v3/orders/15413130193/"}'}, None)
+
+    assert response["statusCode"] == 500
+    assert response["body"] == '{"ok": false, "error_type": "queue_error", "detail": "queue failed"}'

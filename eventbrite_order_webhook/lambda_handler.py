@@ -18,6 +18,14 @@ AGE_RANGE_QUESTION = "¿Cuál es tu rango de edad?"
 MINOR_AGE_RANGE_ANSWER = "14 a 17 años"
 
 
+class ProcessingError(RuntimeError):
+    def __init__(self, error_type: str, detail: str, status_code: int = 500):
+        super().__init__(detail)
+        self.error_type = error_type
+        self.detail = detail
+        self.status_code = status_code
+
+
 def _log_json(message: str, payload: dict[str, Any]) -> None:
     logger.info("%s: %s", message, json.dumps(payload, ensure_ascii=False, default=str))
 
@@ -72,6 +80,20 @@ def _json_response(status_code: int, body: dict[str, Any]) -> dict[str, Any]:
         "statusCode": status_code,
         "headers": {"Content-Type": "application/json"},
         "body": json.dumps(body),
+    }
+
+
+def _request_received_at(request_context: dict[str, Any] | None) -> str:
+    return (
+        (request_context or {}).get("time")
+        or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    )
+
+
+def _request_context_summary(request_context: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "request_id": (request_context or {}).get("requestId"),
+        "time": (request_context or {}).get("time"),
     }
 
 
@@ -172,6 +194,22 @@ def _fetch_venue(venue_id: str, token: str) -> dict[str, Any]:
     return _request_json(f"{base_url}/venues/{venue_id}/", token)
 
 
+def _parse_webhook(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    body = event.get("body") or ""
+    if event.get("isBase64Encoded"):
+        body = base64.b64decode(body).decode("utf-8")
+
+    try:
+        webhook_payload = json.loads(body) if body else {}
+    except json.JSONDecodeError as exc:
+        raise ProcessingError("invalid_payload", "Invalid JSON body.", status_code=400) from exc
+
+    if not isinstance(webhook_payload, dict):
+        raise ProcessingError("invalid_payload", "Webhook body must be a JSON object.", status_code=400)
+
+    return webhook_payload, event.get("requestContext")
+
+
 def _event_datetime_parts(event: dict[str, Any]) -> tuple[str | None, str | None]:
     start_local = ((event.get("start") or {}).get("local")) or ""
     if "T" not in start_local:
@@ -228,6 +266,21 @@ def _build_submission_item(
     }
 
 
+def _build_submission(
+    webhook_payload: dict[str, Any],
+    order_bundle: dict[str, Any],
+    request_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return _build_submission_item(
+        webhook_payload,
+        order_bundle["order"],
+        order_bundle["event_details"],
+        order_bundle["venue_details"],
+        order_bundle["attendees"],
+        _request_received_at(request_context),
+    )
+
+
 def _is_minor_attendee(attendee: dict[str, Any]) -> tuple[bool, str | None]:
     for answer in attendee.get("answers") or []:
         question = _clean_text(answer.get("question"))
@@ -242,10 +295,7 @@ def _build_minor_authorization_jobs(
     request_context: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     jobs: list[dict[str, Any]] = []
-    detected_at = (
-        (request_context or {}).get("time")
-        or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    )
+    detected_at = _request_received_at(request_context)
     buyer = item.get("buyer") or {}
     for attendee in item.get("attendees") or []:
         is_minor, age_range = _is_minor_attendee(attendee)
@@ -280,11 +330,10 @@ def _build_minor_authorization_jobs(
     return jobs
 
 
-def _enqueue_minor_authorization_jobs(
+def _enqueue_minor_jobs(
     item: dict[str, Any],
     request_context: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    queue_url = os.getenv("AUTHORIZATION_QUEUE_URL")
     jobs = _build_minor_authorization_jobs(item, request_context)
     if not jobs:
         _log_json(
@@ -296,6 +345,7 @@ def _enqueue_minor_authorization_jobs(
             },
         )
         return []
+    queue_url = os.getenv("AUTHORIZATION_QUEUE_URL")
     if not queue_url:
         logger.warning(
             "AUTHORIZATION_QUEUE_URL is not configured. Minor authorization jobs were detected but not enqueued."
@@ -316,107 +366,107 @@ def _enqueue_minor_authorization_jobs(
 
     client = _sqs_client()
     enqueued_jobs: list[dict[str, Any]] = []
-    for job in jobs:
-        response = client.send_message(QueueUrl=queue_url, MessageBody=json.dumps(job, ensure_ascii=False))
-        enqueued_job = {
-            **job,
-            "message_id": response.get("MessageId"),
-        }
-        enqueued_jobs.append(enqueued_job)
-        _log_json(
-            "Enqueued minor authorization validation job",
-            {
-                "queue_url": queue_url,
-                "message_id": response.get("MessageId"),
-                "order_id": job.get("order_id"),
-                "event_id": job.get("event_id"),
-                "attendee_id": job.get("attendee_id"),
-                "age_range": job.get("age_range"),
-            },
-        )
-    return enqueued_jobs
+    try:
+        for job in jobs:
+            response = client.send_message(QueueUrl=queue_url, MessageBody=json.dumps(job, ensure_ascii=False))
+            enqueued_jobs.append(
+                {
+                    **job,
+                    "message_id": response.get("MessageId"),
+                }
+            )
+    except Exception as exc:
+        raise ProcessingError("queue_error", f"Failed to enqueue minor authorization jobs: {exc}") from exc
 
-
-def _store_order_submission(webhook_payload: dict[str, Any], request_context: dict[str, Any] | None) -> dict[str, Any]:
-    api_url = webhook_payload.get("api_url")
-    if not api_url:
-        logger.info("Skipping Eventbrite webhook persistence because api_url is missing.")
-        return {"stored": False, "reason": "missing_api_url"}
-
-    order_id = _extract_order_id(str(api_url))
-    if not order_id:
-        logger.info("Skipping Eventbrite webhook persistence because api_url is unsupported: %s", api_url)
-        return {"stored": False, "reason": "unsupported_api_url"}
-
-    table_name = os.getenv("SUBMISSIONS_TABLE_NAME")
-    if not table_name:
-        raise RuntimeError("SUBMISSIONS_TABLE_NAME is not configured.")
-
-    token = _eventbrite_private_token()
-    order = _request_json(str(api_url), token)
     _log_json(
-        "Eventbrite order fetched from webhook api_url",
+        "Enqueued minor authorization jobs",
         {
-            "api_url": api_url,
-            "order_id": order.get("id"),
-            "event_id": order.get("event_id"),
-            "status": order.get("status"),
-            "changed": order.get("changed"),
-        },
-    )
-    event_id = order.get("event_id")
-    event_details = _fetch_event(str(event_id), token) if event_id else {}
-    _log_json(
-        "Eventbrite event fetched from order event_id",
-        {
-            "event_id": event_id,
-            "event_name": _clean_text(((event_details.get("name") or {}).get("text"))),
-            "event_url": event_details.get("url"),
-            "event_start_local": ((event_details.get("start") or {}).get("local")),
-            "event_timezone": ((event_details.get("start") or {}).get("timezone")),
-            "venue_id": event_details.get("venue_id"),
-        },
-    )
-    venue_id = event_details.get("venue_id")
-    venue_details = _fetch_venue(str(venue_id), token) if venue_id else {}
-    _log_json(
-        "Eventbrite venue fetched from event venue_id",
-        {
-            "event_id": event_id,
-            "venue_id": venue_id,
-            "venue_name": _clean_text(venue_details.get("name")),
-            "venue_address": _clean_text(((venue_details.get("address") or {}).get("localized_address_display"))),
-        },
-    )
-    attendees = _fetch_all_order_attendees(order_id, token)
-    _log_json(
-        "Eventbrite order attendees summary",
-        {
-            "order_id": order_id,
-            "attendee_count": len(attendees),
-            "minor_candidate_count": sum(1 for attendee in attendees if _is_minor_attendee(attendee)[0]),
+            "queue_url": queue_url,
+            "order_id": item.get("order_id"),
+            "event_id": item.get("event_id"),
+            "job_count": len(enqueued_jobs),
             "attendee_ids": [
-                attendee.get("id") or attendee.get("attendee_id")
-                for attendee in attendees
-                if attendee.get("id") or attendee.get("attendee_id")
+                job.get("attendee_id") for job in enqueued_jobs
+                if job.get("attendee_id") is not None
             ][:8],
         },
     )
-    received_at = (
-        (request_context or {}).get("time")
-        or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    )
-    item = _build_submission_item(webhook_payload, order, event_details, venue_details, attendees, received_at)
-    _dynamodb_table(table_name).put_item(Item=item)
-    enqueued_jobs = _enqueue_minor_authorization_jobs(item, request_context)
+    return enqueued_jobs
+
+
+def _fetch_order_bundle(api_url: str) -> dict[str, Any]:
+    order_id = _extract_order_id(api_url)
+    if not order_id:
+        raise ProcessingError("unsupported_api_url", "Unsupported Eventbrite api_url.")
+
+    try:
+        token = _eventbrite_private_token()
+        order = _request_json(api_url, token)
+        event_id = order.get("event_id")
+        event_details = _fetch_event(str(event_id), token) if event_id else {}
+        venue_id = event_details.get("venue_id")
+        venue_details = _fetch_venue(str(venue_id), token) if venue_id else {}
+        attendees = _fetch_all_order_attendees(order_id, token)
+    except ProcessingError:
+        raise
+    except Exception as exc:
+        raise ProcessingError("eventbrite_error", f"Failed to fetch Eventbrite order bundle: {exc}") from exc
+
     _log_json(
-        "Stored Eventbrite submission in DynamoDB",
+        "Fetched Eventbrite order bundle",
         {
-            "table_name": table_name,
-            "webhook_action": (webhook_payload.get("config") or {}).get("action"),
-            "request_context": {
-                "request_id": (request_context or {}).get("requestId"),
-                "time": (request_context or {}).get("time"),
+            "api_url": api_url,
+            "order_id": order_id,
+            "event_id": order.get("event_id"),
+            "event_name": _clean_text(((event_details.get("name") or {}).get("text"))),
+            "venue_id": event_details.get("venue_id"),
+            "attendee_count": len(attendees),
+            "minor_candidate_count": sum(1 for attendee in attendees if _is_minor_attendee(attendee)[0]),
+        },
+    )
+    return {
+        "order_id": order_id,
+        "order": order,
+        "event_details": event_details,
+        "venue_details": venue_details,
+        "attendees": attendees,
+    }
+
+
+def _store_submission(item: dict[str, Any], table_name: str) -> None:
+    try:
+        _dynamodb_table(table_name).put_item(Item=item)
+    except Exception as exc:
+        raise ProcessingError("persistence_error", f"Failed to store Eventbrite submission: {exc}") from exc
+
+
+def _submission_result(
+    webhook_payload: dict[str, Any],
+    item: dict[str, Any],
+    enqueued_jobs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "stored": True,
+        "order_id": item.get("order_id"),
+        "attendee_count": item.get("attendee_count"),
+        "webhook_action": (webhook_payload.get("config") or {}).get("action"),
+        "minor_authorization_jobs_enqueued": len(enqueued_jobs),
+    }
+
+
+def _log_stored_submission(
+    webhook_payload: dict[str, Any],
+    request_context: dict[str, Any] | None,
+    item: dict[str, Any],
+    enqueued_jobs: list[dict[str, Any]],
+) -> None:
+    _log_json(
+        "Stored Eventbrite submission",
+        {
+            "request_context": _request_context_summary(request_context),
+            "webhook": {
+                "action": (webhook_payload.get("config") or {}).get("action"),
+                "webhook_id": (webhook_payload.get("config") or {}).get("webhook_id"),
             },
             "submission": {
                 "pk": item.get("pk"),
@@ -428,39 +478,44 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
             },
         },
     )
-    return {
-        "stored": True,
-        "order_id": order_id,
-        "attendee_count": len(attendees),
-        "webhook_action": (webhook_payload.get("config") or {}).get("action"),
-        "minor_authorization_jobs_enqueued": len(enqueued_jobs),
-    }
+
+
+def _store_order_submission(webhook_payload: dict[str, Any], request_context: dict[str, Any] | None) -> dict[str, Any]:
+    api_url = webhook_payload.get("api_url")
+    if not api_url:
+        logger.info("Skipping Eventbrite webhook persistence because api_url is missing.")
+        return {"stored": False, "reason": "missing_api_url"}
+    if not _extract_order_id(str(api_url)):
+        logger.info("Skipping Eventbrite webhook persistence because api_url is unsupported: %s", api_url)
+        return {"stored": False, "reason": "unsupported_api_url"}
+
+    table_name = os.getenv("SUBMISSIONS_TABLE_NAME")
+    if not table_name:
+        raise ProcessingError("persistence_error", "SUBMISSIONS_TABLE_NAME is not configured.")
+
+    order_bundle = _fetch_order_bundle(str(api_url))
+    item = _build_submission(webhook_payload, order_bundle, request_context)
+    _store_submission(item, table_name)
+    enqueued_jobs = _enqueue_minor_jobs(item, request_context)
+    _log_stored_submission(webhook_payload, request_context, item, enqueued_jobs)
+    return _submission_result(webhook_payload, item, enqueued_jobs)
 
 
 def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
-    body = event.get("body") or ""
-    if event.get("isBase64Encoded"):
-        body = base64.b64decode(body).decode("utf-8")
-
     try:
-        webhook_payload = json.loads(body) if body else {}
-    except json.JSONDecodeError:
-        logger.exception("Eventbrite webhook body is not valid JSON.")
-        return _json_response(400, {"ok": False, "detail": "Invalid JSON body."})
-
-    try:
-        result = _store_order_submission(webhook_payload, event.get("requestContext"))
+        webhook_payload, request_context = _parse_webhook(event)
+        result = _store_order_submission(webhook_payload, request_context)
+    except ProcessingError as exc:
+        logger.exception("Failed to process Eventbrite order webhook (%s).", exc.error_type)
+        return _json_response(exc.status_code, {"ok": False, "error_type": exc.error_type, "detail": exc.detail})
     except Exception as exc:
         logger.exception("Failed to process Eventbrite order webhook.")
-        return _json_response(500, {"ok": False, "detail": str(exc)})
+        return _json_response(500, {"ok": False, "error_type": "unexpected_error", "detail": str(exc)})
 
     _log_json(
         "Received Eventbrite webhook",
         {
-            "request_context": {
-                "request_id": (event.get("requestContext") or {}).get("requestId"),
-                "time": (event.get("requestContext") or {}).get("time"),
-            },
+            "request_context": _request_context_summary(request_context),
             "webhook": {
                 "api_url": webhook_payload.get("api_url"),
                 "action": (webhook_payload.get("config") or {}).get("action"),
