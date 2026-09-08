@@ -17,6 +17,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 _SECRET_CACHE: dict[str, dict[str, str]] = {}
+SUPPORTED_DOCUMENT_KINDS = {"cedula", "antecedentes_judiciales", "antecedentes_inhabilidades"}
 
 EXTRACTION_PROMPT = """Eres un extractor de datos de documentos de identidad colombianos (cedula de
 ciudadania formato pre-2020, cedula 2020+ con MRZ, cedula de extranjeria).
@@ -1197,23 +1198,15 @@ def _reconcile_certificate_reviews(form_id: Any, submission_id: Any) -> list[dic
     return updated_items
 
 
-def _process_job(job: dict[str, Any]) -> dict[str, Any]:
-    if str(job.get("form_id") or "").strip() != _background_check_form_id():
-        return {
-            "submission_id": job.get("submission_id"),
-            "status": "ignored",
-            "reason": "form_id_mismatch",
-        }
-    document_kind = str(job.get("document_kind") or "").strip()
-    if document_kind not in {"cedula", "antecedentes_judiciales", "antecedentes_inhabilidades"}:
-        return {
-            "submission_id": job.get("submission_id"),
-            "status": "ignored",
-            "reason": "unsupported_document_kind",
-        }
+def _ignored_review_result(job: dict[str, Any], reason: str) -> dict[str, Any]:
+    return {
+        "submission_id": job.get("submission_id"),
+        "status": "ignored",
+        "reason": reason,
+    }
 
-    submission = _source_submission(job)
-    pdf_bytes = _download_pdf(str(job["s3_bucket"]), str(job["s3_key"]))
+
+def _review_payload_for_job(document_kind: str, pdf_bytes: bytes) -> dict[str, Any]:
     # Bedrock is reserved strictly for identity-document extraction.
     # Certificates follow a separate Textract path to keep responsibilities split.
     if document_kind == "cedula":
@@ -1224,7 +1217,7 @@ def _process_job(job: dict[str, Any]) -> dict[str, Any]:
         extraction = _extract_document_with_bedrock(images)
         cedula_snapshot = _cedula_identity_snapshot({"review_payload": extraction.get("tool_input")})
         cedula_document_validation = _cedula_document_validation(extraction.get("tool_input"), len(images))
-        review_payload = {
+        return {
             "review_engine": "bedrock",
             "review_payload": extraction.get("tool_input"),
             "review_usage": extraction.get("usage"),
@@ -1236,34 +1229,49 @@ def _process_job(job: dict[str, Any]) -> dict[str, Any]:
             "identity_full_name": cedula_snapshot.get("full_name"),
             **cedula_document_validation,
         }
-    else:
-        extraction = _extract_text_with_textract(pdf_bytes)
-        review_payload = {
-            "review_engine": "textract_detect_document_text",
-            "review_text_lines": extraction.get("lines"),
-            "review_text": extraction.get("text"),
-            "page_count_processed": extraction.get("page_count_detected"),
-        }
 
+    extraction = _extract_text_with_textract(pdf_bytes)
+    return {
+        "review_engine": "textract_detect_document_text",
+        "review_text_lines": extraction.get("lines"),
+        "review_text": extraction.get("text"),
+        "page_count_processed": extraction.get("page_count_detected"),
+    }
+
+
+def _validated_review_item(
+    job: dict[str, Any],
+    submission: dict[str, Any] | None,
+    document_kind: str,
+    review_payload: dict[str, Any],
+) -> dict[str, Any]:
     review_item = _review_item(job, submission, review_payload, "completed")
-    if document_kind in {"antecedentes_judiciales", "antecedentes_inhabilidades"}:
-        cedula_review = _get_review_item(job.get("form_id"), job.get("submission_id"), "cedula")
-        review_item = _update_review_validation(
-            review_item,
-            _certificate_validation_result(document_kind, review_item.get("review_text"), cedula_review),
-        )
-    _store_review(review_item)
+    if document_kind not in {"antecedentes_judiciales", "antecedentes_inhabilidades"}:
+        return review_item
+
+    cedula_review = _get_review_item(job.get("form_id"), job.get("submission_id"), "cedula")
+    return _update_review_validation(
+        review_item,
+        _certificate_validation_result(document_kind, review_item.get("review_text"), cedula_review),
+    )
+
+
+def _postprocess_completed_review(job: dict[str, Any], review_item: dict[str, Any]) -> dict[str, Any]:
+    document_kind = str(review_item.get("document_kind") or "")
     reconciled_items: list[dict[str, Any]] = []
     summary_item: dict[str, Any] | None = None
     admin_notification: dict[str, Any] | None = None
+
     if document_kind == "cedula":
         if review_item.get("validation_status") == "valid" and (os.getenv("BACKGROUND_CHECK_REVIEWS_TABLE_NAME") or "").strip():
             reconciled_items = _reconcile_certificate_reviews(job.get("form_id"), job.get("submission_id"))
         summary_item = _store_final_review_summary(job.get("form_id"), job.get("submission_id"))
     elif document_kind in {"antecedentes_judiciales", "antecedentes_inhabilidades"}:
         summary_item = _store_final_review_summary(job.get("form_id"), job.get("submission_id"))
+
     if summary_item:
         admin_notification = _maybe_send_background_check_admin_notification(summary_item)
+
     _log_json(
         "Stored background check review",
         {
@@ -1320,6 +1328,34 @@ def _process_job(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _store_failed_review(job: dict[str, Any], exc: Exception) -> None:
+    failure_item = _review_item(
+        job,
+        _source_submission(job),
+        {
+            "review_error": str(exc),
+            "review_error_type": type(exc).__name__,
+        },
+        "failed",
+    )
+    _store_review(failure_item)
+
+
+def _process_job(job: dict[str, Any]) -> dict[str, Any]:
+    if str(job.get("form_id") or "").strip() != _background_check_form_id():
+        return _ignored_review_result(job, "form_id_mismatch")
+    document_kind = str(job.get("document_kind") or "").strip()
+    if document_kind not in SUPPORTED_DOCUMENT_KINDS:
+        return _ignored_review_result(job, "unsupported_document_kind")
+
+    submission = _source_submission(job)
+    pdf_bytes = _download_pdf(str(job["s3_bucket"]), str(job["s3_key"]))
+    review_payload = _review_payload_for_job(document_kind, pdf_bytes)
+    review_item = _validated_review_item(job, submission, document_kind, review_payload)
+    _store_review(review_item)
+    return _postprocess_completed_review(job, review_item)
+
+
 def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     records = event.get("Records") or []
     processed: list[dict[str, Any]] = []
@@ -1329,15 +1365,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         try:
             processed.append(_process_job(job))
         except Exception as exc:
-            failure_item = _review_item(
-                job,
-                _source_submission(job),
-                {
-                    "review_error": str(exc),
-                },
-                "failed",
-            )
-            _store_review(failure_item)
+            _store_failed_review(job, exc)
             logger.exception(
                 "Failed background check review for submission %s.",
                 job.get("submission_id"),
