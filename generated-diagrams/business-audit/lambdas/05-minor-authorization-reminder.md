@@ -14,15 +14,15 @@ Runs daily, finds minor-authorization jobs still unresolved, refreshes order sta
 
 ## Processing stages
 
-| Stage | What it does | Code anchor |
-| --- | --- | --- |
-| Query unresolved jobs | Reads all `STATUS#missing_form` rows | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/minor_authorization_reminder/lambda_handler.py:45) |
-| Refresh order state | Gets latest normalized order snapshot | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/minor_authorization_reminder/lambda_handler.py:94) |
-| Order gate | Stops reminders when order status is not `placed` | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/minor_authorization_reminder/lambda_handler.py:454) |
-| Time gate | Stops reminders when event datetime has passed in event timezone | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/minor_authorization_reminder/lambda_handler.py:73) |
-| Build email | Builds Eventbrite URL and prefilled YouForm URL | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/minor_authorization_reminder/lambda_handler.py:226) |
-| Send email | Uses SES | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/minor_authorization_reminder/lambda_handler.py:355) |
-| Record reminder state | Updates counters, history, last status and optional closure reason | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/minor_authorization_reminder/lambda_handler.py:388) |
+| Stage | What it does |
+| --- | --- |
+| Query unresolved jobs | Reads all `STATUS#missing_form` rows |
+| Refresh order state | Gets latest normalized order snapshot |
+| Order gate | Stops reminders when order status is not `placed` |
+| Time gate | Stops reminders when event datetime has passed in event timezone |
+| Build email | Builds Eventbrite URL and prefilled YouForm URL |
+| Send email | Uses SES |
+| Record reminder state | Updates counters, history, last status and optional closure reason |
 
 ## Key decisions
 

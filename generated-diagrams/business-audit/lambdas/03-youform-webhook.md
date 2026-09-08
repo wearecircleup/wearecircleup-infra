@@ -25,18 +25,16 @@ This is the densest lambda in the system. It is a config-driven router for multi
 
 ## Processing stages
 
-| Stage | What it does | Code anchor |
-| --- | --- | --- |
-| Parse and decode | Handles base64 body and JSON parsing | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/youform_webhook/lambda_handler.py:1270) |
-| Resolve route | Maps `form_id` to storage config from secret/env | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/youform_webhook/lambda_handler.py:148) |
-| Internal review detection | Requires exact internal-review form id and a valid hidden partition key | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/youform_webhook/lambda_handler.py:243) |
-| File detection | Detects `files.youform.com` URLs | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/youform_webhook/lambda_handler.py:323) |
-| File copy to S3 | Downloads remote file and stores in configured bucket/prefix | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/youform_webhook/lambda_handler.py:369) |
-| Build keyed item | Generates different PK/GSI patterns by route | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/youform_webhook/lambda_handler.py:732) |
-| Persist submission | Writes normalized row or updates internal review | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/youform_webhook/lambda_handler.py:1250) |
-| Reconcile minor jobs | Queries jobs by email and event, then marks authorized | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/youform_webhook/lambda_handler.py:1161) |
-| Notify staff | Sends volunteer proposal email and records result | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/youform_webhook/lambda_handler.py:1108) |
-| Enqueue background review | Classifies stored PDFs and sends one SQS message per supported document | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/youform_webhook/lambda_handler.py:476) |
+| Stage | What it does |
+| --- | --- |
+| Parse webhook | Handles base64 body and JSON parsing |
+| Resolve route | Maps `form_id` into one configured storage and side-effect path |
+| Detect internal review | Allows a special route only when the configured form id and hidden partition key both match |
+| Detect file answers | Finds `files.youform.com` URLs before normalization |
+| Normalize and copy files | Copies files to S3 when the route owns a bucket; if copy fails, preserves the original URL |
+| Persist | Stores one submission row or updates the original background-check row for internal review |
+| Dispatch follow-ups | Depending on route, reconciles minors, notifies staff, or dispatches background-review work |
+| Log summary | Emits a compact structured summary instead of broad payload dumps |
 
 ## Key decisions
 
@@ -45,9 +43,9 @@ This is the densest lambda in the system. It is a config-driven router for multi
 | Route known? | `form_id` exists in configured route table or valid internal-review payload | Otherwise skip persistence |
 | Internal review? | Exact form id plus valid hidden partition key | Update original background submission row |
 | File answer copy? | URL from `files.youform.com` and route has bucket | Copy file to S3; if copy fails, keep original URL |
-| Reconcile minor auth? | Route says `reconcile_minor_authorization=True` | Query jobs table and mark matching jobs authorized |
-| Volunteer admin notification? | Route says `admin_notification_type=volunteer_intent_proposal` | Send SES email and persist status |
-| Background review processing? | Route says `background_check_processing=True` and document kind recognized | Enqueue review jobs |
+| Reconcile minor auth? | Route says `reconcile_minor_authorization=True` | Sync invoke of minor processor |
+| Volunteer admin notification? | Route says `admin_notification_type=volunteer_intent_proposal` | Async invoke of volunteer notifier |
+| Background review processing? | Route says `background_check_processing=True` | Async invoke of background dispatcher |
 
 ## Data and side effects
 
@@ -62,14 +60,16 @@ This is the densest lambda in the system. It is a config-driven router for multi
 
 | Failure mode | Current behavior |
 | --- | --- |
-| Unknown `form_id` | Returns 200 and skips persistence |
+| Invalid JSON | 400 as `invalid_payload` |
+| Unknown `form_id` | Returns 200 with `stored=false` and `reason=unknown_form_route` |
 | File copy failure | Logs error and keeps original file URL |
-| Volunteer email failure | Stores failure state but keeps submission |
-| Background queue missing | Submission can persist without review fan-out |
-| Missing event/email for minor reconciliation | Submission persists but job remains unresolved |
+| Persistence failure | 500 as `storage_error` |
+| Downstream invoke failure | 200 as `downstream_invoke_error`; the submission may already be stored |
+| Missing event/email for minor reconciliation | Submission persists but the later match can still remain unresolved |
 
 ## Observations
 
 - This lambda concentrates the most overlap in the system.
-- It is still functional at your current scale, but from an audit perspective it needs the most documentation because one endpoint hosts four business capabilities.
-- The file-handling concern here is not big binaries; it is that one submission can still trigger copy, storage, queue fan-out and notification work in a single request path.
+- It is still functional at your current scale, but one endpoint still hosts four business capabilities.
+- The latest refactor reduced internal coupling without adding more infrastructure.
+- The file-handling concern here is not big binaries; it is that one submission can still trigger copy, storage and multiple follow-up paths in one request.

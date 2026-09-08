@@ -11,4 +11,6 @@
 | Event datetime parse fails in reminder | Job not recognized as expired | Stale reminders continue | Warning log | Medium |
 | Event published outside API facade | Listing minor links never rewritten | Wrong or missing legal form link | None in system | Medium |
 | Bedrock or Textract failure | Review item marked failed and SQS message fails | Volunteer approval delayed | Failure row plus retry through queue | Medium |
+| Malformed background-review SQS payload | Worker receives invalid JSON or missing required fields | One bad job is discarded after failure record | Failed review row plus no retry for non-retryable input errors | Low |
+| Malformed minor-validation SQS payload | Validator receives invalid JSON or missing required fields | One bad job is discarded without creating fake placeholder rows | Structured failure log plus no retry for non-retryable input errors | Low |
 | Admin email failure in volunteer or background flow | Submission/review persists but no human sees it | Manual work waits invisibly unless logs reviewed | Status persisted on row | Medium |

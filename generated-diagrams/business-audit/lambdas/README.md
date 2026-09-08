@@ -10,6 +10,12 @@ Estas fichas bajan cada lambda a una vista operativa uniforme:
 - estados finales,
 - y modos de fallo visibles.
 
+Regla nueva de mantenimiento:
+
+- las fichas activas enlazan al archivo fuente,
+- no usamos numeros de linea porque se vuelven stale en cada refactor,
+- si una ficha deja de ser confiable, se corrige o se elimina.
+
 ## Fichas
 
 - [01-eventbrite-api.md](C:/Users/gocir/Documents/wearecircleup-infra/generated-diagrams/business-audit/lambdas/01-eventbrite-api.md:1)

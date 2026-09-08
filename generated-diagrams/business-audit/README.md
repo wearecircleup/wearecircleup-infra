@@ -26,3 +26,8 @@ Esta carpeta aterriza la arquitectura y los flujos a una auditoria operativa. La
 ## Fichas por lambda
 
 - [lambdas/README.md](C:/Users/gocir/Documents/wearecircleup-infra/generated-diagrams/business-audit/lambdas/README.md:1)
+
+## Regla de mantenimiento
+
+- Si una ficha depende de numeros de linea del codigo, se considera fragil.
+- Las fichas activas deben enlazar al archivo fuente y describir responsabilidades, decisiones y fallos visibles sin anclarse a offsets internos.

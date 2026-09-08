@@ -11,20 +11,19 @@ Receives Eventbrite order webhook payloads, fetches the authoritative order snap
 | Trigger | API Gateway HTTP API route `POST /webhooks/eventbrite/order-place` |
 | Input | JSON payload with `api_url` pointing at an Eventbrite order resource |
 | Auth | No visible signature verification in handler |
-| Output | `200` for success or skipped persistence, `400` invalid JSON, `500` processing failure |
+| Output | `200` for success or skipped persistence, `400` invalid JSON, `500` for upstream, persistence or queue failures |
 
 ## Processing stages
 
-| Stage | What it does | Code anchor |
-| --- | --- | --- |
-| Parse body | Decodes base64 when needed and parses JSON | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/eventbrite_order_webhook/lambda_handler.py:423) |
-| Validate `api_url` | Requires field and requires Eventbrite order URL shape | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/eventbrite_order_webhook/lambda_handler.py:333) |
-| Fetch order | Calls Eventbrite API using private token from secret/env | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/eventbrite_order_webhook/lambda_handler.py:348) |
-| Fetch event and venue | Enriches order with event and venue context | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/eventbrite_order_webhook/lambda_handler.py:362) |
-| Fetch attendees | Walks pagination for all order attendees | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/eventbrite_order_webhook/lambda_handler.py:153) |
-| Normalize snapshot | Builds one Dynamo row with buyer, attendees, venue and webhook metadata | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/eventbrite_order_webhook/lambda_handler.py:183) |
-| Minor detection | Scans attendee answers for age range `14 a 17 anos` | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/eventbrite_order_webhook/lambda_handler.py:231) |
-| Fan-out | Sends one SQS message per minor if queue is configured | [lambda_handler.py](C:/Users/gocir/Documents/wearecircleup-infra/eventbrite_order_webhook/lambda_handler.py:283) |
+| Stage | What it does |
+| --- | --- |
+| Parse webhook | Decodes base64 when needed and parses JSON into one webhook object |
+| Resolve order URL | Accepts only supported Eventbrite order URLs and skips everything else |
+| Fetch authoritative bundle | Calls Eventbrite for order, event, venue and attendees |
+| Validate bundle shape | Confirms the fetched order bundle is internally consistent before storing |
+| Build submission snapshot | Produces one normalized Dynamo item with buyer, attendees and webhook metadata |
+| Detect minors | Scans attendee answers for the expected minor age-range string |
+| Fan-out validation jobs | Sends one SQS message per minor attendee when queue config exists |
 
 ## Key decisions
 
@@ -32,6 +31,7 @@ Receives Eventbrite order webhook payloads, fetches the authoritative order snap
 | --- | --- | --- | --- |
 | `api_url present?` | payload contains `api_url` | Continue | Skip persistence |
 | `api_url supported?` | Host is Eventbrite API and path matches `/v3/orders/{id}` | Continue | Skip persistence |
+| Bundle coherent? | Returned order id and payload shapes match expectations | Continue | Return `eventbrite_error` |
 | `Minor detected?` | Age question answer matches configured minor answer | Create job(s) | Store snapshot only |
 | `Queue configured?` | `AUTHORIZATION_QUEUE_URL` exists | Send SQS | Log skip |
 
@@ -49,11 +49,15 @@ Receives Eventbrite order webhook payloads, fetches the authoritative order snap
 | Failure mode | Current behavior |
 | --- | --- |
 | Invalid JSON | 400 |
+| Missing `api_url` | 200 with `stored=false` and `reason=missing_api_url` |
+| Unsupported `api_url` | 200 with `stored=false` and `reason=unsupported_api_url` |
 | Eventbrite request error | 500 |
+| Eventbrite bundle inconsistency | 500 as `eventbrite_error` |
 | Missing submissions table env | 500 |
-| Queue missing | Snapshot still stored; async minor path silently disabled except logs |
+| Queue missing | Snapshot still stored; async minor path disabled and logged |
 
 ## Observations
 
 - Good separation between ingestion and async validation.
+- The handler is now internally modular without changing topology: parse, fetch bundle, build snapshot, persist, enqueue.
 - Main audit gap: webhook trust is weak because I do not see a request-signature validation path.
