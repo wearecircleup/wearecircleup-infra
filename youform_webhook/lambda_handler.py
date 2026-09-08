@@ -18,6 +18,14 @@ logger.setLevel(logging.INFO)
 
 _SECRET_CACHE: dict[str, dict[str, str]] = {}
 
+
+class ProcessingError(RuntimeError):
+    def __init__(self, error_type: str, detail: str, status_code: int = 500):
+        super().__init__(detail)
+        self.error_type = error_type
+        self.detail = detail
+        self.status_code = status_code
+
 SIGNATURE_QUESTION = "Firma para autorizar"
 EVENT_URL_QUESTION = "¿A qué evento asiste?"
 EVENT_DATE_QUESTION = "¿Qué día es el evento?"
@@ -193,6 +201,14 @@ def _background_internal_review_form_id() -> str:
     raise RuntimeError("VOLUNTEER_BACKGROUND_INTERNAL_REVIEW_FORM_ID is not configured.")
 
 
+def _json_response(status_code: int, body: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(body),
+    }
+
+
 def _configured_form_routes() -> dict[str, dict[str, Any]]:
     secret_id = os.getenv("EVENTBRITE_SECRET_ID")
     secret = _load_secret(secret_id) if secret_id else {}
@@ -354,6 +370,24 @@ def _decoded_body(event: dict[str, Any]) -> str:
     return body
 
 
+def _request_context_summary(request_context: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "request_id": (request_context or {}).get("requestId"),
+        "time": (request_context or {}).get("time"),
+    }
+
+
+def _parse_webhook(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    raw_body = _decoded_body(event)
+    try:
+        payload = json.loads(raw_body) if raw_body else {}
+    except json.JSONDecodeError as exc:
+        raise ProcessingError("invalid_payload", "Invalid JSON body.", status_code=400) from exc
+    if not isinstance(payload, dict):
+        raise ProcessingError("invalid_payload", "Webhook body must be a JSON object.", status_code=400)
+    return payload, event.get("requestContext")
+
+
 def _slugify_storage_fragment(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", _normalized_question_key(value))
     slug = slug.strip("-")
@@ -453,10 +487,15 @@ def _normalize_answers(parsed_body: dict[str, Any], storage_config: dict[str, An
                     storage_config,
                 )
             except Exception:
-                logger.exception(
-                    "Failed to copy YouForm file for submission %s question %s. Keeping original URL.",
-                    parsed_body.get("submission_id"),
-                    normalized_question,
+                logger.exception("Failed to copy YouForm file. Keeping original URL.")
+                _log_json(
+                    "YouForm file copy fallback",
+                    {
+                        "error_type": "file_copy_error",
+                        "submission_id": parsed_body.get("submission_id"),
+                        "form_id": parsed_body.get("form_id"),
+                        "question": str(normalized_question),
+                    },
                 )
         normalized.append({"question": str(normalized_question), "answer": normalized_answer})
     return normalized
@@ -799,8 +838,30 @@ def _store_background_internal_review(parsed_body: dict[str, Any], storage_confi
     return True, payload
 
 
-def _store_submission(parsed_body: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
+def _storage_route_summary(parsed_body: dict[str, Any], storage_config: dict[str, Any] | None) -> dict[str, Any] | None:
+    if storage_config is None:
+        return None
+    return {
+        "form_id": parsed_body.get("form_id"),
+        "table_name": storage_config.get("table_name"),
+        "bucket_name": storage_config.get("bucket_name"),
+        "storage_prefix": storage_config.get("storage_prefix"),
+        "reconcile_minor_authorization": storage_config.get("reconcile_minor_authorization"),
+        "key_strategy": storage_config.get("key_strategy"),
+        "admin_notification_type": storage_config.get("admin_notification_type"),
+        "background_check_processing": storage_config.get("background_check_processing"),
+    }
+
+
+def _resolve_storage_route(parsed_body: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     storage_config = _storage_config_for_form(parsed_body.get("form_id"), parsed_body)
+    return storage_config, _storage_route_summary(parsed_body, storage_config)
+
+
+def _store_submission_with_config(
+    parsed_body: dict[str, Any],
+    storage_config: dict[str, Any] | None,
+) -> tuple[bool, dict[str, Any] | None]:
     if storage_config is None:
         logger.info(
             "Skipping persistence because form_id %s is not configured for storage routing.",
@@ -819,14 +880,124 @@ def _store_submission(parsed_body: dict[str, Any]) -> tuple[bool, dict[str, Any]
     return True, item
 
 
-def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
-    raw_body = _decoded_body(event)
-    parsed_body: Any
-    try:
-        parsed_body = json.loads(raw_body) if raw_body else None
-    except json.JSONDecodeError:
-        parsed_body = None
+def _store_submission(parsed_body: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
+    storage_config, _storage_route = _resolve_storage_route(parsed_body)
+    return _store_submission_with_config(parsed_body, storage_config)
 
+
+def _dispatch_followups(item: dict[str, Any], storage_config: dict[str, Any]) -> dict[str, Any]:
+    followups: dict[str, Any] = {
+        "reconciliation": None,
+        "admin_notification": None,
+        "background_check_reviews": None,
+    }
+    try:
+        if storage_config.get("reconcile_minor_authorization"):
+            followups["reconciliation"] = _invoke_lambda(
+                _minor_authorization_processor_function_name(),
+                item,
+                "RequestResponse",
+            )
+        if storage_config.get("admin_notification_type") == "volunteer_intent_proposal":
+            followups["admin_notification"] = _invoke_lambda(
+                _volunteer_intent_notifier_function_name(),
+                item,
+                "Event",
+            )
+        if storage_config.get("background_check_processing"):
+            followups["background_check_reviews"] = _invoke_lambda(
+                _background_check_dispatcher_function_name(),
+                item,
+                "Event",
+            )
+    except Exception as exc:
+        raise ProcessingError("downstream_invoke_error", str(exc), status_code=200) from exc
+    return followups
+
+
+def _submission_summary(parsed_body: dict[str, Any]) -> dict[str, Any]:
+    answers = parsed_body.get("answers")
+    answer_count = len(answers) if isinstance(answers, dict) else 0
+    return {
+        "form_id": parsed_body.get("form_id"),
+        "form_name": parsed_body.get("form_name"),
+        "submission_id": parsed_body.get("submission_id"),
+        "event_type": parsed_body.get("event_type"),
+        "completed_at": parsed_body.get("completed_at"),
+        "answer_count": answer_count,
+    }
+
+
+def _stored_item_summary(stored_item: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(stored_item, dict):
+        return None
+    return {
+        "pk": stored_item.get("pk"),
+        "sk": stored_item.get("sk"),
+        "submission_id": stored_item.get("submission_id"),
+        "form_id": stored_item.get("form_id"),
+        "eventbrite_event_id": stored_item.get("eventbrite_event_id"),
+        "answers_count": len(stored_item.get("answers") or []),
+    }
+
+
+def _followup_summary(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(result, dict):
+        return None
+    summary = {
+        "accepted": result.get("accepted"),
+        "function_name": result.get("function_name"),
+        "status_code": result.get("status_code"),
+    }
+    if "reconciled" in result:
+        summary.update(
+            {
+                "reconciled": result.get("reconciled"),
+                "reason": result.get("reason"),
+                "submission_id": result.get("submission_id"),
+                "updated_job_count": len(result.get("updated_jobs") or []),
+            }
+        )
+    return {key: value for key, value in summary.items() if value is not None}
+
+
+def _log_webhook_summary(
+    request_context: dict[str, Any] | None,
+    parsed_body: dict[str, Any] | None,
+    storage_route: dict[str, Any] | None,
+    detected_file_answers: list[dict[str, str]],
+    stored: bool,
+    stored_item: dict[str, Any] | None,
+    reconciliation: dict[str, Any] | None,
+    admin_notification: dict[str, Any] | None,
+    background_check_reviews: dict[str, Any] | None,
+    error_type: str | None = None,
+    error_detail: str | None = None,
+) -> None:
+    _log_json(
+        "Received YouForm webhook",
+        {
+            "request_context": _request_context_summary(request_context),
+            "submission": _submission_summary(parsed_body) if isinstance(parsed_body, dict) else None,
+            "storage_route": storage_route,
+            "detected_files": {
+                "file_answer_count": len(detected_file_answers),
+                "questions": [item.get("question") for item in detected_file_answers if item.get("question")][:8],
+            },
+            "stored": stored,
+            "stored_item": _stored_item_summary(stored_item),
+            "reconciliation": _followup_summary(reconciliation),
+            "admin_notification": _followup_summary(admin_notification),
+            "background_check_reviews": _followup_summary(background_check_reviews),
+            "error_type": error_type,
+            "error_detail": error_detail,
+        },
+    )
+
+
+def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
+    parsed_body: dict[str, Any] | None = None
+    request_context: dict[str, Any] | None = event.get("requestContext")
     stored = False
     reconciliation: dict[str, Any] | None = None
     admin_notification: dict[str, Any] | None = None
@@ -834,129 +1005,60 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     storage_route: dict[str, Any] | None = None
     stored_item: dict[str, Any] | None = None
     detected_file_answers: list[dict[str, str]] = []
-
-    if isinstance(parsed_body, dict):
-        storage_config = _storage_config_for_form(parsed_body.get("form_id"), parsed_body)
+    try:
+        parsed_body, request_context = _parse_webhook(event)
         detected_file_answers = _detected_file_answers(parsed_body)
-        if storage_config is not None:
-            storage_route = {
-                "form_id": parsed_body.get("form_id"),
-                "table_name": storage_config.get("table_name"),
-                "bucket_name": storage_config.get("bucket_name"),
-                "storage_prefix": storage_config.get("storage_prefix"),
-                "reconcile_minor_authorization": storage_config.get("reconcile_minor_authorization"),
-                "key_strategy": storage_config.get("key_strategy"),
-                "admin_notification_type": storage_config.get("admin_notification_type"),
-                "background_check_processing": storage_config.get("background_check_processing"),
-            }
-        stored, item = _store_submission(parsed_body)
-        stored_item = item
-        if stored and item is not None and storage_config and storage_config.get("reconcile_minor_authorization"):
-            reconciliation = _invoke_lambda(
-                _minor_authorization_processor_function_name(),
-                item,
-                "RequestResponse",
+        storage_config, storage_route = _resolve_storage_route(parsed_body)
+        if storage_config is None:
+            _log_webhook_summary(
+                request_context,
+                parsed_body,
+                None,
+                detected_file_answers,
+                stored=False,
+                stored_item=None,
+                reconciliation=None,
+                admin_notification=None,
+                background_check_reviews=None,
+                error_type="unknown_form_route",
+                error_detail="Form is not configured for storage routing.",
             )
-        if stored and item is not None and storage_config and storage_config.get("admin_notification_type") == "volunteer_intent_proposal":
-            admin_notification = _invoke_lambda(
-                _volunteer_intent_notifier_function_name(),
-                item,
-                "Event",
+            return _json_response(
+                200,
+                {
+                    "ok": True,
+                    "message": "YouForm webhook received.",
+                    "stored": False,
+                    "reason": "unknown_form_route",
+                    "admin_notification": None,
+                    "background_check_reviews": None,
+                    "reconciliation": None,
+                },
             )
-        if stored and item is not None and storage_config and storage_config.get("background_check_processing"):
-            background_check_reviews = _invoke_lambda(
-                _background_check_dispatcher_function_name(),
-                item,
-                "Event",
-            )
+        try:
+            stored, stored_item = _store_submission_with_config(parsed_body, storage_config)
+        except Exception as exc:
+            raise ProcessingError("storage_error", str(exc), status_code=500) from exc
 
-    _log_json(
-        "Received YouForm webhook",
-        {
-            "request_context": {
-                "request_id": (event.get("requestContext") or {}).get("requestId"),
-                "time": (event.get("requestContext") or {}).get("time"),
-            },
-            "submission": (
-                {
-                    "form_id": parsed_body.get("form_id"),
-                    "form_name": parsed_body.get("form_name"),
-                    "submission_id": parsed_body.get("submission_id"),
-                    "event_type": parsed_body.get("event_type"),
-                    "completed_at": parsed_body.get("completed_at"),
-                    "answer_count": len(parsed_body.get("answers") or {}),
-                }
-                if isinstance(parsed_body, dict)
-                else None
-            ),
-            "storage_route": (
-                {
-                    "form_id": storage_route.get("form_id"),
-                    "table_name": storage_route.get("table_name"),
-                    "bucket_name": storage_route.get("bucket_name"),
-                    "storage_prefix": storage_route.get("storage_prefix"),
-                    "reconcile_minor_authorization": storage_route.get("reconcile_minor_authorization"),
-                    "admin_notification_type": storage_route.get("admin_notification_type"),
-                    "background_check_processing": storage_route.get("background_check_processing"),
-                }
-                if isinstance(storage_route, dict)
-                else None
-            ),
-            "detected_files": {
-                "file_answer_count": len(detected_file_answers),
-                "questions": [
-                    item.get("question") for item in detected_file_answers
-                    if item.get("question") is not None
-                ][:8],
-            },
-            "stored": stored,
-            "stored_item": (
-                {
-                    "pk": stored_item.get("pk"),
-                    "sk": stored_item.get("sk"),
-                    "submission_id": stored_item.get("submission_id"),
-                    "form_id": stored_item.get("form_id"),
-                    "eventbrite_event_id": stored_item.get("eventbrite_event_id"),
-                    "answers_count": len(stored_item.get("answers") or []),
-                }
-                if isinstance(stored_item, dict)
-                else None
-            ),
-            "admin_notification": (
-                {
-                    "accepted": admin_notification.get("accepted"),
-                    "function_name": admin_notification.get("function_name"),
-                    "status_code": admin_notification.get("status_code"),
-                }
-                if isinstance(admin_notification, dict)
-                else None
-            ),
-            "background_check_reviews": (
-                {
-                    "accepted": background_check_reviews.get("accepted"),
-                    "function_name": background_check_reviews.get("function_name"),
-                    "status_code": background_check_reviews.get("status_code"),
-                }
-                if isinstance(background_check_reviews, dict)
-                else None
-            ),
-            "reconciliation": (
-                {
-                    "reconciled": reconciliation.get("reconciled"),
-                    "reason": reconciliation.get("reason"),
-                    "submission_id": reconciliation.get("submission_id"),
-                    "updated_job_count": len(reconciliation.get("updated_jobs") or []),
-                }
-                if isinstance(reconciliation, dict)
-                else None
-            ),
-        },
-    )
+        if stored and stored_item is not None:
+            followups = _dispatch_followups(stored_item, storage_config)
+            reconciliation = followups["reconciliation"]
+            admin_notification = followups["admin_notification"]
+            background_check_reviews = followups["background_check_reviews"]
 
-    return {
-        "statusCode": 200,
-        "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(
+        _log_webhook_summary(
+            request_context,
+            parsed_body,
+            storage_route,
+            detected_file_answers,
+            stored,
+            stored_item,
+            reconciliation,
+            admin_notification,
+            background_check_reviews,
+        )
+        return _json_response(
+            200,
             {
                 "ok": True,
                 "message": "YouForm webhook received.",
@@ -964,6 +1066,61 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "admin_notification": admin_notification,
                 "background_check_reviews": background_check_reviews,
                 "reconciliation": reconciliation,
-            }
-        ),
-    }
+            },
+        )
+    except ProcessingError as exc:
+        logger.exception("YouForm webhook processing failed: %s", exc.error_type)
+        _log_webhook_summary(
+            request_context,
+            parsed_body,
+            storage_route,
+            detected_file_answers,
+            stored,
+            stored_item,
+            reconciliation,
+            admin_notification,
+            background_check_reviews,
+            error_type=exc.error_type,
+            error_detail=exc.detail,
+        )
+        return _json_response(
+            exc.status_code,
+            {
+                "ok": False,
+                "message": "YouForm webhook processing failed.",
+                "error_type": exc.error_type,
+                "detail": exc.detail,
+                "stored": stored,
+                "admin_notification": admin_notification,
+                "background_check_reviews": background_check_reviews,
+                "reconciliation": reconciliation,
+            },
+        )
+    except Exception as exc:
+        logger.exception("Unexpected YouForm webhook error.")
+        _log_webhook_summary(
+            request_context,
+            parsed_body,
+            storage_route,
+            detected_file_answers,
+            stored,
+            stored_item,
+            reconciliation,
+            admin_notification,
+            background_check_reviews,
+            error_type="unexpected_error",
+            error_detail=str(exc),
+        )
+        return _json_response(
+            500,
+            {
+                "ok": False,
+                "message": "YouForm webhook processing failed.",
+                "error_type": "unexpected_error",
+                "detail": str(exc),
+                "stored": stored,
+                "admin_notification": admin_notification,
+                "background_check_reviews": background_check_reviews,
+                "reconciliation": reconciliation,
+            },
+        )

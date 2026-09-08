@@ -507,3 +507,78 @@ def test_handler_calls_minor_authorization_processor_synchronously(monkeypatch):
     assert payload["reconciliation"]["reconciled"] is True
     assert fake_lambda.invocations[0]["FunctionName"] == "minor-authorization-processor"
     assert fake_lambda.invocations[0]["InvocationType"] == "RequestResponse"
+
+
+def test_handler_rejects_invalid_json():
+    response = mod.handler({"body": "{"}, None)
+    payload = mod.json.loads(response["body"])
+
+    assert response["statusCode"] == 400
+    assert payload["ok"] is False
+    assert payload["error_type"] == "invalid_payload"
+
+
+def test_handler_reports_storage_error(monkeypatch):
+    class FailingTable:
+        def put_item(self, Item):
+            raise RuntimeError("ddb down")
+
+    parsed_body = {
+        "submission_id": "ahcscgfgka",
+        "form_id": "46titbii",
+        "form_name": "Volunteer Intent Proposal",
+        "event_type": "submission",
+        "completed_at": "2026-08-08T21:13:52.000000Z",
+        "answers": {"Nombre": "Napoleon"},
+    }
+
+    monkeypatch.setenv("VOLUNTEER_INTENT_PROPOSAL_FORM_ID", "46titbii")
+    monkeypatch.setenv("VOLUNTEER_INTENT_PROPOSAL_SUBMISSIONS_TABLE_NAME", "proposal-table")
+    monkeypatch.setattr(mod, "_dynamodb_table", lambda table_name: FailingTable())
+
+    response = mod.handler({"body": mod.json.dumps(parsed_body)}, None)
+    payload = mod.json.loads(response["body"])
+
+    assert response["statusCode"] == 500
+    assert payload["ok"] is False
+    assert payload["error_type"] == "storage_error"
+    assert payload["stored"] is False
+
+
+def test_handler_reports_downstream_invoke_error_after_store(monkeypatch):
+    saved: dict[str, object] = {}
+
+    class FakeProposalTable:
+        def put_item(self, Item):
+            saved["Item"] = Item
+
+    class FailingLambda:
+        def invoke(self, **kwargs):
+            raise RuntimeError("lambda invoke failed")
+
+    parsed_body = {
+        "submission_id": "ahcscgfgka",
+        "form_id": "46titbii",
+        "form_name": "Volunteer Intent Proposal",
+        "event_type": "submission",
+        "completed_at": "2026-08-08T21:13:52.000000Z",
+        "answers": {
+            "Nombre": "Napoleon Bonaparte",
+            "Correo": "napoleonbonaparte@gmail.com",
+        },
+    }
+
+    monkeypatch.setenv("VOLUNTEER_INTENT_PROPOSAL_FORM_ID", "46titbii")
+    monkeypatch.setenv("VOLUNTEER_INTENT_PROPOSAL_SUBMISSIONS_TABLE_NAME", "proposal-table")
+    monkeypatch.setenv("VOLUNTEER_INTENT_NOTIFIER_FUNCTION_NAME", "volunteer-intent-notifier")
+    monkeypatch.setattr(mod, "_dynamodb_table", lambda table_name: FakeProposalTable())
+    monkeypatch.setattr(mod, "_lambda_client", lambda: FailingLambda())
+
+    response = mod.handler({"body": mod.json.dumps(parsed_body)}, None)
+    payload = mod.json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert payload["ok"] is False
+    assert payload["error_type"] == "downstream_invoke_error"
+    assert payload["stored"] is True
+    assert saved["Item"]["pk"] == "FORM#46titbii"
