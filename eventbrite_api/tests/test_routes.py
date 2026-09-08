@@ -16,6 +16,7 @@ class FakeClient:
     def __init__(self):
         self.calls = []
         self.fail_ticket = False
+        self.attendee_total = 0
         self.structured_content = {
             "resource_uris": {"self": "https://www.eventbriteapi.com/v3/events/event-1/structured_content/1/"},
             "purpose": "listing",
@@ -66,6 +67,16 @@ class FakeClient:
             "status": "live",
             "url": "https://www.eventbrite.co/e/summer-triangle-corner-tickets-1996424879557",
             "start": {"local": "2026-08-07T19:00:00-05:00"},
+        }
+
+    async def list_attendees(self, event_id, params):
+        self.calls.append(("list_attendees", event_id, params))
+        return {
+            "attendees": [],
+            "pagination": {
+                "has_more_items": False,
+                "object_count": self.attendee_total,
+            },
         }
 
     async def delete_event(self, event_id):
@@ -213,6 +224,18 @@ def test_event_delete_returns_204_when_eventbrite_accepts_the_delete(client_and_
     response = client.delete("/events/event-1", params={"confirm": "true"})
     assert response.status_code == 204
     assert fake.calls[-1] == ("delete_event", "event-1")
+
+
+def test_event_delete_returns_409_when_event_has_registrations(client_and_fake) -> None:
+    client, fake = client_and_fake
+    fake.attendee_total = 3
+
+    response = client.delete("/events/event-1", params={"confirm": "true"})
+
+    assert response.status_code == 409
+    assert "already has registrations" in response.text
+    assert ("delete_event", "event-1") not in fake.calls
+    assert fake.calls[-1] == ("list_attendees", "event-1", {"page": 1})
 
 
 def test_image_completion_accepts_the_studio_json_body(client_and_fake) -> None:

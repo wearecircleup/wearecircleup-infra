@@ -121,6 +121,18 @@ async def attendee_count(client: EventbriteClient, event_id: str, status_filter:
     return int((response.get("pagination") or {}).get("object_count", 0))
 
 
+async def ensure_event_can_be_deleted(client: EventbriteClient, event_id: str) -> None:
+    registered = await attendee_count(client, event_id)
+    if registered > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This event already has registrations. Cancel the event in Eventbrite, notify attendees, "
+                "and handle refunds before considering permanent deletion."
+            ),
+        )
+
+
 @app.exception_handler(EventbriteAPIError)
 async def eventbrite_error_handler(request: Request, exc: EventbriteAPIError) -> JSONResponse:
     logger.exception(
@@ -381,6 +393,7 @@ async def delete_event(
 ) -> Response:
     if not confirm:
         raise HTTPException(status_code=400, detail="Set confirm=true to permanently delete this event.")
+    await ensure_event_can_be_deleted(client, event_id)
     logger.info("Deleting Eventbrite event %s", event_id)
     try:
         await client.delete_event(event_id)
