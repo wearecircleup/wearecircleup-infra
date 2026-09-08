@@ -58,16 +58,6 @@ variable "submissions_table_name" {
   type        = string
 }
 
-variable "minor_authorization_jobs_table_arn" {
-  description = "DynamoDB table ARN used to reconcile minor authorization jobs."
-  type        = string
-}
-
-variable "minor_authorization_jobs_table_name" {
-  description = "DynamoDB table name used to reconcile minor authorization jobs."
-  type        = string
-}
-
 variable "volunteer_background_check_files_bucket_arn" {
   description = "Private S3 bucket ARN used to store copied YouForm background-check files."
   type        = string
@@ -88,16 +78,6 @@ variable "volunteer_background_check_submissions_table_name" {
   type        = string
 }
 
-variable "background_check_review_queue_arn" {
-  description = "SQS queue ARN used to enqueue background check reviews."
-  type        = string
-}
-
-variable "background_check_review_queue_url" {
-  description = "SQS queue URL used to enqueue background check reviews."
-  type        = string
-}
-
 variable "volunteer_intent_proposal_submissions_table_arn" {
   description = "DynamoDB table ARN used to store volunteer intent proposal submissions."
   type        = string
@@ -108,22 +88,32 @@ variable "volunteer_intent_proposal_submissions_table_name" {
   type        = string
 }
 
-variable "volunteer_intent_notification_from_email" {
-  description = "SES sender used for volunteer intent admin notifications."
+variable "minor_authorization_processor_lambda_arn" {
+  description = "Lambda ARN used to reconcile minor authorization submissions."
   type        = string
 }
 
-variable "volunteer_intent_notification_to_email" {
-  description = "SES destination used for volunteer intent admin notifications."
+variable "minor_authorization_processor_lambda_name" {
+  description = "Lambda name used to reconcile minor authorization submissions."
   type        = string
 }
 
-variable "volunteer_intent_notification_reply_to_email" {
-  description = "Reply-to email used for volunteer intent admin notifications."
+variable "volunteer_intent_notifier_lambda_arn" {
+  description = "Lambda ARN used to process volunteer intent notifications."
   type        = string
 }
 
-variable "volunteer_intent_notification_logo_url" {
-  description = "Public logo URL rendered in volunteer intent admin notifications."
+variable "volunteer_intent_notifier_lambda_name" {
+  description = "Lambda name used to process volunteer intent notifications."
+  type        = string
+}
+
+variable "background_check_dispatcher_lambda_arn" {
+  description = "Lambda ARN used to dispatch background check review jobs."
+  type        = string
+}
+
+variable "background_check_dispatcher_lambda_name" {
+  description = "Lambda name used to dispatch background check review jobs."
   type        = string
 }

@@ -29,13 +29,19 @@ Este setup deja un flujo basico y profesional para Terraform con GitHub Actions 
 - `infra/modules/eventbrite-order-submissions-dynamodb`: modulo de DynamoDB para ordenes normalizadas de Eventbrite
 - `infra/modules/minor-authorization-jobs-dynamodb`: modulo de DynamoDB para jobs y auditoria de validacion NNA
 - `infra/modules/minor-authorization-validator`: modulo de Lambda + SQS para validar formularios de menores
+- `infra/modules/minor-authorization-processor`: modulo de Lambda para reconciliar formularios de menores desde YouForm
 - `infra/modules/youform-webhook`: modulo del receptor de webhooks de YouForm en Lambda + API Gateway
+- `infra/modules/volunteer-intent-notifier`: modulo de Lambda para notificar propuestas de voluntariado
+- `infra/modules/background-check-dispatcher`: modulo de Lambda para despachar PDFs a la cola de background checks
 - `infra/modules/youform-submissions-dynamodb`: modulo de DynamoDB para submissions normalizados de YouForm
 - `infra/scripts/bootstrap-state-bucket.sh`: asegura que el bucket de state exista antes de ejecutar Terraform
 - `infra/scripts/build-eventbrite-api-package.sh`: empaqueta `eventbrite_api` para Lambda
 - `infra/scripts/build-eventbrite-order-webhook-package.sh`: empaqueta `eventbrite_order_webhook` para Lambda
+- `infra/scripts/build-minor-authorization-processor-package.sh`: empaqueta `minor_authorization_processor` para Lambda
 - `infra/scripts/build-minor-authorization-validator-package.sh`: empaqueta `minor_authorization_validator` para Lambda
 - `infra/scripts/build-youform-webhook-package.sh`: empaqueta `youform_webhook` para Lambda
+- `infra/scripts/build-volunteer-intent-notifier-package.sh`: empaqueta `volunteer_intent_notifier` para Lambda
+- `infra/scripts/build-background-check-dispatcher-package.sh`: empaqueta `background_check_dispatcher` para Lambda
 
 ## Flujos
 
@@ -48,8 +54,11 @@ Workflow: `.github/workflows/terraform-plan-apply.yml`
   - crea/configura el bucket remoto de state si no existe
   - empaqueta `eventbrite_api` para Lambda
   - empaqueta `eventbrite_order_webhook` para Lambda
+  - empaqueta `minor_authorization_processor` para Lambda
   - empaqueta `minor_authorization_validator` para Lambda
   - empaqueta `youform_webhook` para Lambda
+  - empaqueta `volunteer_intent_notifier` para Lambda
+  - empaqueta `background_check_dispatcher` para Lambda
   - corre `terraform init`, `validate`, `plan` y `apply`
 - En `workflow_dispatch`:
   - puedes correr `plan` o `apply` manualmente

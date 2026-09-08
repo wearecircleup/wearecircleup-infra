@@ -69,6 +69,10 @@ jobs:
         working-directory: .
         run: bash ./infra/scripts/build-youform-webhook-package.sh
 
+      - name: Build minor_authorization_processor Lambda package
+        working-directory: .
+        run: bash ./infra/scripts/build-minor-authorization-processor-package.sh
+
       - name: Build minor_authorization_validator Lambda package
         working-directory: .
         run: bash ./infra/scripts/build-minor-authorization-validator-package.sh
@@ -76,6 +80,14 @@ jobs:
       - name: Build minor_authorization_reminder Lambda package
         working-directory: .
         run: bash ./infra/scripts/build-minor-authorization-reminder-package.sh
+
+      - name: Build volunteer_intent_notifier Lambda package
+        working-directory: .
+        run: bash ./infra/scripts/build-volunteer-intent-notifier-package.sh
+
+      - name: Build background_check_dispatcher Lambda package
+        working-directory: .
+        run: bash ./infra/scripts/build-background-check-dispatcher-package.sh
 
       - name: Build background_check_reviewer Lambda package
         working-directory: .

@@ -125,6 +125,47 @@ module "youform_background_check_files_s3" {
   purpose_tag = "youform-volunteer-background-check-files"
 }
 
+module "minor_authorization_processor" {
+  source = "../modules/minor-authorization-processor"
+
+  common_tags            = local.common_tags
+  eventbrite_secret_arn  = module.secretsmanager_eventbrite.secret_arn
+  eventbrite_secret_name = module.secretsmanager_eventbrite.secret_name
+  jobs_table_arn         = module.minor_authorization_jobs_dynamodb.table_arn
+  jobs_table_name        = module.minor_authorization_jobs_dynamodb.table_name
+  lambda_function_name   = local.minor_authorization_processor_lambda
+  lambda_package_path    = abspath("${path.root}/../artifacts/minor-authorization-processor/minor_authorization_processor_lambda.zip")
+  lambda_role_name       = local.minor_authorization_processor_role
+}
+
+module "volunteer_intent_notifier" {
+  source = "../modules/volunteer-intent-notifier"
+
+  common_tags                 = local.common_tags
+  lambda_function_name        = local.volunteer_intent_notifier_lambda
+  lambda_package_path         = abspath("${path.root}/../artifacts/volunteer-intent-notifier/volunteer_intent_notifier_lambda.zip")
+  lambda_role_name            = local.volunteer_intent_notifier_role
+  notification_from_email     = local.youform_volunteer_intent_sender
+  notification_logo_url       = local.youform_volunteer_intent_logo
+  notification_reply_to_email = local.youform_volunteer_intent_reply_to
+  notification_to_email       = local.youform_volunteer_intent_recipient
+  submissions_table_arn       = module.youform_volunteer_intent_submissions_dynamodb.table_arn
+  submissions_table_name      = module.youform_volunteer_intent_submissions_dynamodb.table_name
+}
+
+module "background_check_dispatcher" {
+  source = "../modules/background-check-dispatcher"
+
+  background_check_review_queue_arn = module.background_check_review_sqs.queue_arn
+  background_check_review_queue_url = module.background_check_review_sqs.queue_url
+  common_tags                       = local.common_tags
+  eventbrite_secret_arn             = module.secretsmanager_eventbrite.secret_arn
+  eventbrite_secret_name            = module.secretsmanager_eventbrite.secret_name
+  lambda_function_name              = local.background_check_dispatcher_lambda
+  lambda_package_path               = abspath("${path.root}/../artifacts/background-check-dispatcher/background_check_dispatcher_lambda.zip")
+  lambda_role_name                  = local.background_check_dispatcher_role
+}
+
 module "youform_webhook" {
   source = "../modules/youform-webhook"
 
@@ -140,20 +181,18 @@ module "youform_webhook" {
   signatures_bucket_name                            = module.youform_signatures_s3.bucket_name
   submissions_table_arn                             = module.youform_submissions_dynamodb.table_arn
   submissions_table_name                            = module.youform_submissions_dynamodb.table_name
-  minor_authorization_jobs_table_arn                = module.minor_authorization_jobs_dynamodb.table_arn
-  minor_authorization_jobs_table_name               = module.minor_authorization_jobs_dynamodb.table_name
   volunteer_background_check_files_bucket_arn       = module.youform_background_check_files_s3.bucket_arn
   volunteer_background_check_files_bucket_name      = module.youform_background_check_files_s3.bucket_name
   volunteer_background_check_submissions_table_arn  = module.youform_background_check_submissions_dynamodb.table_arn
   volunteer_background_check_submissions_table_name = module.youform_background_check_submissions_dynamodb.table_name
-  background_check_review_queue_arn                 = module.background_check_review_sqs.queue_arn
-  background_check_review_queue_url                 = module.background_check_review_sqs.queue_url
   volunteer_intent_proposal_submissions_table_arn   = module.youform_volunteer_intent_submissions_dynamodb.table_arn
   volunteer_intent_proposal_submissions_table_name  = module.youform_volunteer_intent_submissions_dynamodb.table_name
-  volunteer_intent_notification_from_email          = local.youform_volunteer_intent_sender
-  volunteer_intent_notification_to_email            = local.youform_volunteer_intent_recipient
-  volunteer_intent_notification_reply_to_email      = local.youform_volunteer_intent_reply_to
-  volunteer_intent_notification_logo_url            = local.youform_volunteer_intent_logo
+  minor_authorization_processor_lambda_arn          = module.minor_authorization_processor.lambda_function_arn
+  minor_authorization_processor_lambda_name         = module.minor_authorization_processor.lambda_function_name
+  volunteer_intent_notifier_lambda_arn              = module.volunteer_intent_notifier.lambda_function_arn
+  volunteer_intent_notifier_lambda_name             = module.volunteer_intent_notifier.lambda_function_name
+  background_check_dispatcher_lambda_arn            = module.background_check_dispatcher.lambda_function_arn
+  background_check_dispatcher_lambda_name           = module.background_check_dispatcher.lambda_function_name
 }
 
 module "background_check_review_worker" {

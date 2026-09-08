@@ -93,6 +93,11 @@ output "minor_authorization_validator_lambda_function_name" {
   value       = module.minor_authorization_validator.lambda_function_name
 }
 
+output "minor_authorization_processor_lambda_function_name" {
+  description = "Lambda function name reconciling minor authorization submissions from YouForm."
+  value       = module.minor_authorization_processor.lambda_function_name
+}
+
 output "minor_authorization_validation_queue_name" {
   description = "SQS queue name receiving minor authorization validation jobs."
   value       = module.minor_authorization_validator.queue_name
@@ -141,6 +146,16 @@ output "background_check_reviews_table_name" {
 output "background_check_reviewer_lambda_function_name" {
   description = "Lambda function name consuming background check review jobs."
   value       = module.background_check_review_worker.lambda_function_name
+}
+
+output "volunteer_intent_notifier_lambda_function_name" {
+  description = "Lambda function name sending volunteer intent admin notifications."
+  value       = module.volunteer_intent_notifier.lambda_function_name
+}
+
+output "background_check_dispatcher_lambda_function_name" {
+  description = "Lambda function name dispatching background check documents to the review queue."
+  value       = module.background_check_dispatcher.lambda_function_name
 }
 
 output "background_check_review_queue_name" {

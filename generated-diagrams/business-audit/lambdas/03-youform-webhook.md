@@ -12,6 +12,7 @@ This is the densest lambda in the system. It is a config-driven router for multi
 | Input | YouForm submission payload |
 | Auth | No visible signature verification in handler |
 | Routing key | `form_id`, plus hidden `Partition key` answer for internal review |
+| Operational file-size assumption | Attached files are expected to stay below `50 KB` and not reach `0.5 MB` |
 
 ## Routing modes
 
@@ -71,3 +72,4 @@ This is the densest lambda in the system. It is a config-driven router for multi
 
 - This lambda concentrates the most overlap in the system.
 - It is still functional at your current scale, but from an audit perspective it needs the most documentation because one endpoint hosts four business capabilities.
+- The file-handling concern here is not big binaries; it is that one submission can still trigger copy, storage, queue fan-out and notification work in a single request path.

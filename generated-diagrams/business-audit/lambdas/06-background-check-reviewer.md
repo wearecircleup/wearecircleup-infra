@@ -10,7 +10,8 @@ Consumes one SQS message per uploaded background-check PDF, reviews the document
 | --- | --- |
 | Trigger | SQS event source mapping, batch size 1 |
 | Input | Job with `form_id`, `submission_id`, `document_kind`, S3 location and contact context |
-| Engines | Bedrock for cédula extraction, Textract for certificates |
+| Engines | Bedrock for cedula extraction, Textract for certificates |
+| Operational file-size assumption | The PDFs handled here are expected to stay below `50 KB` and effectively never reach `0.5 MB` |
 
 ## Processing stages
 
@@ -59,3 +60,4 @@ Consumes one SQS message per uploaded background-check PDF, reviews the document
 
 - This is the most domain-rich async lambda after `youform_webhook`.
 - The key thing diagrams must show is aggregation: final approval is not decided by one document but by the combination of cedula + two certificates + summary rules.
+- The main risk here is not oversized files; it is the amount of processing stages chained onto each small file.

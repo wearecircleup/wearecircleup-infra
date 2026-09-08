@@ -33,15 +33,12 @@ resource "aws_iam_role_policy" "dynamodb" {
         Effect = "Allow"
         Action = [
           "dynamodb:PutItem",
-          "dynamodb:Query",
           "dynamodb:UpdateItem"
         ]
         Resource = [
           var.submissions_table_arn,
           var.volunteer_intent_proposal_submissions_table_arn,
-          var.volunteer_background_check_submissions_table_arn,
-          var.minor_authorization_jobs_table_arn,
-          "${var.minor_authorization_jobs_table_arn}/index/*"
+          var.volunteer_background_check_submissions_table_arn
         ]
       }
     ]
@@ -90,7 +87,7 @@ resource "aws_iam_role_policy" "secrets" {
 }
 
 resource "aws_iam_role_policy" "ses" {
-  name = "${var.lambda_function_name}-ses"
+  name = "${var.lambda_function_name}-lambda-invoke"
   role = aws_iam_role.lambda.id
 
   policy = jsonencode({
@@ -99,29 +96,12 @@ resource "aws_iam_role_policy" "ses" {
       {
         Effect = "Allow"
         Action = [
-          "ses:SendEmail",
-          "ses:SendRawEmail"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy" "sqs" {
-  name = "${var.lambda_function_name}-sqs"
-  role = aws_iam_role.lambda.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "sqs:SendMessage"
+          "lambda:InvokeFunction"
         ]
         Resource = [
-          var.background_check_review_queue_arn
+          var.minor_authorization_processor_lambda_arn,
+          var.volunteer_intent_notifier_lambda_arn,
+          var.background_check_dispatcher_lambda_arn
         ]
       }
     ]
@@ -153,13 +133,10 @@ resource "aws_lambda_function" "this" {
       VOLUNTEER_INTENT_PROPOSAL_SUBMISSIONS_TABLE_NAME  = var.volunteer_intent_proposal_submissions_table_name
       VOLUNTEER_BACKGROUND_CHECK_SUBMISSIONS_TABLE_NAME = var.volunteer_background_check_submissions_table_name
       VOLUNTEER_BACKGROUND_CHECK_FILES_BUCKET_NAME      = var.volunteer_background_check_files_bucket_name
-      MINOR_AUTHORIZATION_JOBS_TABLE_NAME               = var.minor_authorization_jobs_table_name
       EVENTBRITE_SECRET_ID                              = var.eventbrite_secret_name
-      VOLUNTEER_INTENT_NOTIFICATION_FROM_EMAIL          = var.volunteer_intent_notification_from_email
-      VOLUNTEER_INTENT_NOTIFICATION_TO_EMAIL            = var.volunteer_intent_notification_to_email
-      VOLUNTEER_INTENT_NOTIFICATION_REPLY_TO_EMAIL      = var.volunteer_intent_notification_reply_to_email
-      VOLUNTEER_INTENT_NOTIFICATION_LOGO_URL            = var.volunteer_intent_notification_logo_url
-      BACKGROUND_CHECK_REVIEW_QUEUE_URL                 = var.background_check_review_queue_url
+      MINOR_AUTHORIZATION_PROCESSOR_FUNCTION_NAME       = var.minor_authorization_processor_lambda_name
+      VOLUNTEER_INTENT_NOTIFIER_FUNCTION_NAME           = var.volunteer_intent_notifier_lambda_name
+      BACKGROUND_CHECK_DISPATCHER_FUNCTION_NAME         = var.background_check_dispatcher_lambda_name
     }
   }
 

@@ -16,7 +16,7 @@
 | Storage | Background check submissions | DynamoDB | Volunteer document intake plus embedded internal review | `youform_webhook`, `background_check_reviewer` | Submission metadata, copied file URIs, internal review |
 | Storage | Background check reviews | DynamoDB | One row per reviewed document plus final summary on cedula row | `background_check_reviewer` | Validation results, summary, notification fingerprints |
 | File store | YouForm signatures bucket | S3 | Preserve signature and legal minor files | `youform_webhook` | `s3://.../youform-signatures/...` |
-| File store | Background check files bucket | S3 | Preserve volunteer PDFs copied from YouForm | `youform_webhook` | `s3://.../volunteer-background-checks/...` |
+| File store | Background check files bucket | S3 | Preserve volunteer PDFs copied from YouForm | `youform_webhook` | `s3://.../volunteer-background-checks/...`; files are expected to stay below `50 KB` |
 | Messaging | Minor auth validation queue + DLQ | SQS | Buffer one validation job per minor | `eventbrite_order_webhook`, `minor_authorization_validator` | Async validation workload |
 | Messaging | Background check review queue + DLQ | SQS | Buffer one review job per uploaded PDF | `youform_webhook`, `background_check_reviewer` | Async document review workload |
 | Security/config | Shared Eventbrite secret | Secrets Manager | Eventbrite token plus form ids and shared config | Lambdas and API | Runtime secrets |

@@ -8,7 +8,7 @@
 | Volunteer proposal submission | `youform_webhook` | Volunteer proposal table | Staff email workflow | `gsi2` by email, `gsi3` by phone | Same webhook, different table and semantics |
 | Background compliance submission | `youform_webhook` | Background submissions table | Background reviewer, internal review | Form and submission keys, email/phone GSIs | Also stores copied S3 URIs |
 | Internal review payload | `youform_webhook` | Embedded in original background submission row | Human follow-up, audits | Hidden `partition_key` parsed from form | Not a separate service or queue |
-| Signature or uploaded PDF | `youform_webhook` | S3 private buckets | Background reviewer or legal audit | Bucket key derived from form route + submission id | Original YouForm URL may remain if S3 copy fails |
+| Signature or uploaded PDF | `youform_webhook` | S3 private buckets | Background reviewer or legal audit | Bucket key derived from form route + submission id | Original YouForm URL may remain if S3 copy fails; operationally these files are expected to stay below `50 KB` |
 | Background document review | `background_check_reviewer` | Background check reviews table | Same worker, admin notification | `gsi2pk=SUBMISSION#{submission_id}` | One row per document kind |
 | Background final summary | `background_check_reviewer` | Stored onto cedula review row | Admin email, internal review form | `gsi4pk=PARTITION_KEY#{partition_key}` when available | Status is `PRE_APPROVED`, `REJECTED` or `PENDING_DOCUMENTS` |
 | Volunteer proposal admin notification state | `youform_webhook` | Proposal table | Audits | Fields on same row | Tracks delivery outcome |

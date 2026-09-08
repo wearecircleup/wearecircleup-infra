@@ -305,7 +305,11 @@ def _enqueue_minor_authorization_jobs(
             {
                 "order_id": item.get("order_id"),
                 "event_id": item.get("event_id"),
-                "jobs": jobs,
+                "job_count": len(jobs),
+                "attendee_ids": [
+                    job.get("attendee_id") for job in jobs
+                    if job.get("attendee_id") is not None
+                ][:8],
             },
         )
         return []
@@ -324,7 +328,10 @@ def _enqueue_minor_authorization_jobs(
             {
                 "queue_url": queue_url,
                 "message_id": response.get("MessageId"),
-                "job": job,
+                "order_id": job.get("order_id"),
+                "event_id": job.get("event_id"),
+                "attendee_id": job.get("attendee_id"),
+                "age_range": job.get("age_range"),
             },
         )
     return enqueued_jobs
@@ -354,11 +361,9 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
             "order_id": order.get("id"),
             "event_id": order.get("event_id"),
             "status": order.get("status"),
-            "email": order.get("email"),
             "changed": order.get("changed"),
         },
     )
-    _log_json("Eventbrite raw order payload", order)
     event_id = order.get("event_id")
     event_details = _fetch_event(str(event_id), token) if event_id else {}
     _log_json(
@@ -385,11 +390,16 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
     )
     attendees = _fetch_all_order_attendees(order_id, token)
     _log_json(
-        "Eventbrite raw order attendees payload",
+        "Eventbrite order attendees summary",
         {
             "order_id": order_id,
             "attendee_count": len(attendees),
-            "attendees": attendees,
+            "minor_candidate_count": sum(1 for attendee in attendees if _is_minor_attendee(attendee)[0]),
+            "attendee_ids": [
+                attendee.get("id") or attendee.get("attendee_id")
+                for attendee in attendees
+                if attendee.get("id") or attendee.get("attendee_id")
+            ][:8],
         },
     )
     received_at = (
@@ -403,12 +413,19 @@ def _store_order_submission(webhook_payload: dict[str, Any], request_context: di
         "Stored Eventbrite submission in DynamoDB",
         {
             "table_name": table_name,
-            "order_id": order_id,
-            "event_id": order.get("event_id"),
-            "attendee_count": len(attendees),
             "webhook_action": (webhook_payload.get("config") or {}).get("action"),
-            "minor_authorization_jobs_enqueued": len(enqueued_jobs),
-            "stored_item": item,
+            "request_context": {
+                "request_id": (request_context or {}).get("requestId"),
+                "time": (request_context or {}).get("time"),
+            },
+            "submission": {
+                "pk": item.get("pk"),
+                "sk": item.get("sk"),
+                "order_id": item.get("order_id"),
+                "event_id": item.get("event_id"),
+                "attendee_count": item.get("attendee_count"),
+                "minor_authorization_jobs_enqueued": len(enqueued_jobs),
+            },
         },
     )
     return {
@@ -440,8 +457,15 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     _log_json(
         "Received Eventbrite webhook",
         {
-            "request_context": event.get("requestContext"),
-            "parsed_body": webhook_payload,
+            "request_context": {
+                "request_id": (event.get("requestContext") or {}).get("requestId"),
+                "time": (event.get("requestContext") or {}).get("time"),
+            },
+            "webhook": {
+                "api_url": webhook_payload.get("api_url"),
+                "action": (webhook_payload.get("config") or {}).get("action"),
+                "webhook_id": (webhook_payload.get("config") or {}).get("webhook_id"),
+            },
             "result": result,
         },
     )

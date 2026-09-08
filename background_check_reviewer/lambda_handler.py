@@ -40,6 +40,10 @@ Reglas:
 """
 
 
+def _log_json(message: str, payload: dict[str, Any]) -> None:
+    logger.info("%s: %s", message, json.dumps(payload, ensure_ascii=False, default=str))
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -1260,21 +1264,51 @@ def _process_job(job: dict[str, Any]) -> dict[str, Any]:
         summary_item = _store_final_review_summary(job.get("form_id"), job.get("submission_id"))
     if summary_item:
         admin_notification = _maybe_send_background_check_admin_notification(summary_item)
-    logger.info("Stored background check review: %s", json.dumps(review_item, ensure_ascii=False, default=str))
+    _log_json(
+        "Stored background check review",
+        {
+            "pk": review_item.get("pk"),
+            "sk": review_item.get("sk"),
+            "submission_id": review_item.get("submission_id"),
+            "document_kind": review_item.get("document_kind"),
+            "status": review_item.get("status"),
+            "review_engine": review_item.get("review_engine"),
+            "page_count_processed": review_item.get("page_count_processed"),
+            "validation_status": review_item.get("validation_status"),
+            "validation_error_count": len(review_item.get("validation_errors") or []),
+        },
+    )
     if reconciled_items:
-        logger.info(
-            "Reconciled certificate reviews after cedula processing: %s",
-            json.dumps(reconciled_items, ensure_ascii=False, default=str),
+        _log_json(
+            "Reconciled certificate reviews after cedula processing",
+            {
+                "reconciled_count": len(reconciled_items),
+                "document_kinds": [
+                    item.get("document_kind") for item in reconciled_items
+                    if item.get("document_kind") is not None
+                ][:8],
+            },
         )
     if summary_item:
-        logger.info(
-            "Stored background check final summary: %s",
-            json.dumps(summary_item, ensure_ascii=False, default=str),
+        _log_json(
+            "Stored background check final summary",
+            {
+                "pk": summary_item.get("pk"),
+                "sk": summary_item.get("sk"),
+                "submission_id": summary_item.get("submission_id"),
+                "final_review_status": summary_item.get("final_review_status"),
+                "approval_status": summary_item.get("approval_status"),
+                "document_kinds": sorted((summary_item.get("final_review_details") or {}).keys()),
+            },
         )
     if admin_notification:
-        logger.info(
-            "Processed background check admin notification: %s",
-            json.dumps(admin_notification, ensure_ascii=False, default=str),
+        _log_json(
+            "Processed background check admin notification",
+            {
+                "sent": admin_notification.get("sent"),
+                "status": admin_notification.get("status"),
+                "has_message_id": bool(admin_notification.get("message_id")),
+            },
         )
     return {
         "submission_id": job.get("submission_id"),
@@ -1310,17 +1344,27 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             )
             raise
 
-    logger.info(
-        "Processed background check review batch: %s",
-        json.dumps(
-            {
-                "record_count": len(records),
-                "reviews_table": os.getenv("BACKGROUND_CHECK_REVIEWS_TABLE_NAME"),
-                "processed": processed,
-            },
-            ensure_ascii=False,
-            default=str,
-        ),
+    _log_json(
+        "Processed background check review batch",
+        {
+            "record_count": len(records),
+            "reviews_table": os.getenv("BACKGROUND_CHECK_REVIEWS_TABLE_NAME"),
+            "processed_count": len(processed),
+            "statuses": sorted(
+                {
+                    str(item.get("status"))
+                    for item in processed
+                    if item.get("status") is not None
+                }
+            ),
+            "document_kinds": sorted(
+                {
+                    str(item.get("document_kind"))
+                    for item in processed
+                    if item.get("document_kind") is not None
+                }
+            ),
+        },
     )
     return {
         "statusCode": 200,

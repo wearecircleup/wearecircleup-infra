@@ -21,6 +21,7 @@ Esta carpeta aterriza la arquitectura y los flujos a una auditoria operativa. La
 - [08-enforcement-gap-matrix.md](C:/Users/gocir/Documents/wearecircleup-infra/generated-diagrams/business-audit/08-enforcement-gap-matrix.md)
 - [09-business-rule-ownership.md](C:/Users/gocir/Documents/wearecircleup-infra/generated-diagrams/business-audit/09-business-rule-ownership.md)
 - [10-failure-mode-business-impact.md](C:/Users/gocir/Documents/wearecircleup-infra/generated-diagrams/business-audit/10-failure-mode-business-impact.md)
+- [11-high-data-motion-and-collapse-risk.md](C:/Users/gocir/Documents/wearecircleup-infra/generated-diagrams/business-audit/11-high-data-motion-and-collapse-risk.md)
 
 ## Fichas por lambda
 
